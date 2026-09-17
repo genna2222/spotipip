@@ -1,34 +1,235 @@
 import sys
 import os
 import re
+import ctypes
+import ctypes.util
 import subprocess
 import requests
 from pathlib import Path
 from PyQt6.QtCore import Qt, QTimer, QPoint, QThread, pyqtSignal
 from PyQt6.QtGui import QIcon
 from PyQt6.QtWidgets import (
-    QApplication, QLabel, QWidget, QVBoxLayout,
+    QApplication, QLabel, QWidget, QVBoxLayout, 
     QHBoxLayout, QPushButton, QSizeGrip, QMenu
 )
 
 CACHE_DIR = Path.home() / ".cache" / "spotify-pip"
 CACHE_DIR.mkdir(parents=True, exist_ok=True)
-FAVORITES_FILE = CACHE_DIR / "favorites.txt"
+
+
+# --- STRUTTURE DATI X11 USATE DA ctypes ---
+class _XRectangle(ctypes.Structure):
+    _fields_ = [
+        ("x", ctypes.c_short),
+        ("y", ctypes.c_short),
+        ("width", ctypes.c_ushort),
+        ("height", ctypes.c_ushort),
+    ]
+
+
+class _XClientMessageData(ctypes.Union):
+    _fields_ = [
+        ("b", ctypes.c_char * 20),
+        ("s", ctypes.c_short * 10),
+        ("l", ctypes.c_long * 5),
+    ]
+
+
+class _XClientMessageEvent(ctypes.Structure):
+    _fields_ = [
+        ("type", ctypes.c_int),
+        ("serial", ctypes.c_ulong),
+        ("send_event", ctypes.c_int),
+        ("display", ctypes.c_void_p),
+        ("window", ctypes.c_ulong),
+        ("message_type", ctypes.c_ulong),
+        ("format", ctypes.c_int),
+        ("data", _XClientMessageData),
+    ]
+
+
+# --- CONTROLLO NATIVO X11/XWayland ---
+class X11WindowManager:
+    """Operazioni X11 che non richiedono di ricreare la finestra Qt.
+
+    Su GNOME/Mutter con Qt su XWayland questo permette di:
+      * svuotare la Input Shape della finestra per il click-through;
+      * chiedere a Mutter lo stato EWMH _NET_WM_STATE_ABOVE;
+    senza chiamare setWindowFlags() dopo la creazione della GUI.
+    """
+
+    ShapeInput = 2
+    ClientMessage = 33
+    SubstructureNotifyMask = 1 << 19
+    SubstructureRedirectMask = 1 << 20
+    NetWmStateAdd = 1
+
+    def __init__(self):
+        self.display = None
+        self.x11 = None
+        self.xfixes = None
+        self.net_wm_state = None
+        self.net_wm_state_above = None
+        self.available = False
+        self._open()
+
+    def _open(self):
+        if not os.environ.get("DISPLAY"):
+            return
+
+        try:
+            x11_path = ctypes.util.find_library("X11")
+            xfixes_path = ctypes.util.find_library("Xfixes")
+            if not x11_path or not xfixes_path:
+                return
+
+            self.x11 = ctypes.CDLL(x11_path)
+            self.xfixes = ctypes.CDLL(xfixes_path)
+
+            self.x11.XOpenDisplay.argtypes = [ctypes.c_char_p]
+            self.x11.XOpenDisplay.restype = ctypes.c_void_p
+            self.x11.XCloseDisplay.argtypes = [ctypes.c_void_p]
+            self.x11.XCloseDisplay.restype = ctypes.c_int
+            self.x11.XFlush.argtypes = [ctypes.c_void_p]
+            self.x11.XFlush.restype = ctypes.c_int
+            self.x11.XInternAtom.argtypes = [ctypes.c_void_p, ctypes.c_char_p, ctypes.c_int]
+            self.x11.XInternAtom.restype = ctypes.c_ulong
+            self.x11.XDefaultRootWindow.argtypes = [ctypes.c_void_p]
+            self.x11.XDefaultRootWindow.restype = ctypes.c_ulong
+            self.x11.XSendEvent.argtypes = [
+                ctypes.c_void_p,
+                ctypes.c_ulong,
+                ctypes.c_int,
+                ctypes.c_long,
+                ctypes.c_void_p,
+            ]
+            self.x11.XSendEvent.restype = ctypes.c_int
+
+            self.xfixes.XFixesCreateRegion.argtypes = [
+                ctypes.c_void_p,
+                ctypes.POINTER(_XRectangle),
+                ctypes.c_int,
+            ]
+            self.xfixes.XFixesCreateRegion.restype = ctypes.c_ulong
+            self.xfixes.XFixesSetWindowShapeRegion.argtypes = [
+                ctypes.c_void_p,
+                ctypes.c_ulong,
+                ctypes.c_int,
+                ctypes.c_int,
+                ctypes.c_int,
+                ctypes.c_ulong,
+            ]
+            self.xfixes.XFixesSetWindowShapeRegion.restype = None
+            self.xfixes.XFixesDestroyRegion.argtypes = [ctypes.c_void_p, ctypes.c_ulong]
+            self.xfixes.XFixesDestroyRegion.restype = None
+
+            self.display = self.x11.XOpenDisplay(None)
+            if not self.display:
+                self.display = None
+                return
+
+            self.net_wm_state = self.x11.XInternAtom(self.display, b"_NET_WM_STATE", False)
+            self.net_wm_state_above = self.x11.XInternAtom(self.display, b"_NET_WM_STATE_ABOVE", False)
+            self.available = bool(self.net_wm_state and self.net_wm_state_above)
+        except Exception:
+            self.display = None
+            self.available = False
+
+    def _window_id(self, win_id):
+        try:
+            return int(win_id)
+        except (TypeError, ValueError):
+            return 0
+
+    def set_input_transparent(self, win_id, transparent, width=1, height=1):
+        """Imposta una Input Shape vuota/piena senza modificare i Window Flags Qt."""
+        if not self.available or not self.display:
+            return False
+
+        xid = self._window_id(win_id)
+        if not xid:
+            return False
+
+        try:
+            if transparent:
+                rect_ptr = ctypes.POINTER(_XRectangle)()
+                region = self.xfixes.XFixesCreateRegion(self.display, rect_ptr, 0)
+            else:
+                width = max(1, min(int(width), 65535))
+                height = max(1, min(int(height), 65535))
+                rect = _XRectangle(0, 0, width, height)
+                region = self.xfixes.XFixesCreateRegion(self.display, ctypes.byref(rect), 1)
+
+            if not region:
+                return False
+
+            self.xfixes.XFixesSetWindowShapeRegion(
+                self.display,
+                xid,
+                self.ShapeInput,
+                0,
+                0,
+                region,
+            )
+            self.xfixes.XFixesDestroyRegion(self.display, region)
+            self.x11.XFlush(self.display)
+            return True
+        except Exception:
+            return False
+
+    def set_always_on_top(self, win_id):
+        """Chiede a Mutter di aggiungere _NET_WM_STATE_ABOVE alla finestra."""
+        if not self.available or not self.display:
+            return False
+
+        xid = self._window_id(win_id)
+        if not xid:
+            return False
+
+        try:
+            root = self.x11.XDefaultRootWindow(self.display)
+            event = _XClientMessageEvent()
+            event.type = self.ClientMessage
+            event.serial = 0
+            event.send_event = 1
+            event.display = self.display
+            event.window = xid
+            event.message_type = self.net_wm_state
+            event.format = 32
+            event.data.l[0] = self.NetWmStateAdd
+            event.data.l[1] = ctypes.c_long(self.net_wm_state_above).value
+            event.data.l[2] = 0
+            event.data.l[3] = 0
+            event.data.l[4] = 0
+
+            mask = self.SubstructureNotifyMask | self.SubstructureRedirectMask
+            sent = self.x11.XSendEvent(
+                self.display,
+                root,
+                False,
+                mask,
+                ctypes.byref(event),
+            )
+            self.x11.XFlush(self.display)
+            return bool(sent)
+        except Exception:
+            return False
+
+    def close(self):
+        if self.display and self.x11:
+            try:
+                self.x11.XCloseDisplay(self.display)
+            except Exception:
+                pass
+        self.display = None
 
 
 # --- PULSANTE DI SBLOCCO FLUTTUANTE SEPARATO ---
 class UnlockButton(QWidget):
     def __init__(self, main_window):
-        super().__init__(
-            None,
-            Qt.WindowType.WindowStaysOnTopHint
-            | Qt.WindowType.FramelessWindowHint
-            | Qt.WindowType.Tool
-            | Qt.WindowType.X11BypassWindowManagerHint,
-        )
+        super().__init__(None, Qt.WindowType.WindowStaysOnTopHint | Qt.WindowType.FramelessWindowHint | Qt.WindowType.Tool)
         self.main_window = main_window
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
-        self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating)
         self.setFixedSize(30, 30)
 
         layout = QVBoxLayout(self)
@@ -51,10 +252,6 @@ class UnlockButton(QWidget):
         """)
         self.btn.clicked.connect(self.main_window.unlock_ui)
         layout.addWidget(self.btn)
-
-    def keep_on_top(self):
-        self.raise_()
-        self.show()
 
 
 # --- THREAD ASINCRONO CON SUPPORTO CACHE ---
@@ -80,16 +277,14 @@ class LyricsFetcherWorker(QThread):
     def save_to_cache(self, lrc_text):
         try:
             self.get_cache_filepath().write_text(lrc_text, encoding="utf-8")
-        except Exception:
-            pass
+        except Exception: pass
 
     def load_from_cache(self):
         try:
             cache_file = self.get_cache_filepath()
             if cache_file.exists():
                 return cache_file.read_text(encoding="utf-8")
-        except Exception:
-            pass
+        except Exception: pass
         return None
 
     def clean_query(self, text):
@@ -119,48 +314,34 @@ class LyricsFetcherWorker(QThread):
     def fetch_lrclib_exact(self, clean_title):
         try:
             params = {"artist_name": self.artist, "track_name": clean_title}
-            if self.duration:
-                params["duration"] = int(self.duration)
+            if self.duration: params["duration"] = int(self.duration)
             res = self.session.get("https://lrclib.net/api/get", params=params, timeout=3.5)
             if res.status_code == 200 and res.json().get("syncedLyrics"):
                 return res.json()["syncedLyrics"]
-        except Exception:
-            pass
+        except Exception: pass
         return None
 
     def fetch_lrclib_search(self, clean_title):
         try:
             query = f"{self.artist} {clean_title}"
-            res = self.session.get(
-                "https://lrclib.net/api/search", params={"q": query}, timeout=3.5
-            )
+            res = self.session.get("https://lrclib.net/api/search", params={"q": query}, timeout=3.5)
             if res.status_code == 200:
                 for item in res.json():
-                    if item.get("syncedLyrics"):
-                        return item["syncedLyrics"]
-        except Exception:
-            pass
+                    if item.get("syncedLyrics"): return item["syncedLyrics"]
+        except Exception: pass
         return None
 
     def fetch_netease(self, clean_title):
         try:
             search_url = "https://music.163.com/api/search/get/web"
-            res = self.session.post(
-                search_url,
-                data={"s": f"{self.artist} {clean_title}", "type": 1, "offset": 0, "limit": 3},
-                timeout=4,
-            )
+            res = self.session.post(search_url, data={"s": f"{self.artist} {clean_title}", "type": 1, "offset": 0, "limit": 3}, timeout=4)
             if res.status_code == 200:
                 songs = res.json().get("result", {}).get("songs", [])
                 if songs:
-                    l_res = self.session.get(
-                        f"https://music.163.com/api/song/lyric?id={songs[0]['id']}&lv=1&tv=-1",
-                        timeout=4,
-                    )
+                    l_res = self.session.get(f"https://music.163.com/api/song/lyric?id={songs[0]['id']}&lv=1&tv=-1", timeout=4)
                     if l_res.status_code == 200:
                         return l_res.json().get("lrc", {}).get("lyric")
-        except Exception:
-            pass
+        except Exception: pass
         return None
 
     def run(self):
@@ -173,11 +354,9 @@ class LyricsFetcherWorker(QThread):
                     return
 
         clean_title = self.clean_query(self.title)
-        raw_lrc = (
-            self.fetch_lrclib_exact(clean_title)
-            or self.fetch_lrclib_search(clean_title)
-            or self.fetch_netease(clean_title)
-        )
+        raw_lrc = self.fetch_lrclib_exact(clean_title) or \
+                  self.fetch_lrclib_search(clean_title) or \
+                  self.fetch_netease(clean_title)
 
         if raw_lrc:
             self.save_to_cache(raw_lrc)
@@ -191,16 +370,19 @@ class SpotifyPip(QWidget):
     def __init__(self):
         super().__init__()
 
+        # Usiamo Window invece di Tool per permettere alla barra delle applicazioni (Dash to Panel)
+        # di intercettare e mostrare l'icona tra le applicazioni aperte
         self.base_flags = (
-            Qt.WindowType.WindowStaysOnTopHint
-            | Qt.WindowType.FramelessWindowHint
-            | Qt.WindowType.Window
+            Qt.WindowType.WindowStaysOnTopHint | 
+            Qt.WindowType.FramelessWindowHint | 
+            Qt.WindowType.Window
         )
 
         self.setWindowTitle("Spotipip")
         self.setWindowFlags(self.base_flags)
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
-
+        
+        # Carica l'icona dell'app se presente nel sistema o localmente
         app_icon = QIcon.fromTheme("spotipip", QIcon("spotipip.png"))
         if not app_icon.isNull():
             self.setWindowIcon(app_icon)
@@ -230,14 +412,10 @@ class SpotifyPip(QWidget):
         top_bar.setContentsMargins(0, 0, 0, 0)
 
         self.title_label = QLabel("Spotipip")
-        self.title_label.setStyleSheet(
-            "color: #cccccc; font-size: 11px; font-weight: bold;"
-        )
-
+        self.title_label.setStyleSheet("color: #cccccc; font-size: 11px; font-weight: bold;")
+        
         self.source_badge = QLabel("")
-        self.source_badge.setStyleSheet(
-            "color: #aaaaaa; font-size: 10px; padding-right: 6px;"
-        )
+        self.source_badge.setStyleSheet("color: #aaaaaa; font-size: 10px; padding-right: 6px;")
 
         btn_top_style = """
             QPushButton {
@@ -251,14 +429,6 @@ class SpotifyPip(QWidget):
             QPushButton:hover { background: rgba(255, 255, 255, 0.15); color: white; }
         """
 
-        # Pulsante Cuore Preferiti
-        self.fav_button = QPushButton("♡")
-        self.fav_button.setFixedSize(26, 26)
-        self.fav_button.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.fav_button.setToolTip("Aggiungi ai preferiti locali")
-        self.fav_button.clicked.connect(self.toggle_favorite)
-        self.fav_button.setStyleSheet(btn_top_style + "QPushButton { font-size: 17px; }")
-
         self.lock_button = QPushButton("📌")
         self.lock_button.setFixedSize(26, 26)
         self.lock_button.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -270,14 +440,11 @@ class SpotifyPip(QWidget):
         self.close_button.setFixedSize(26, 26)
         self.close_button.setCursor(Qt.CursorShape.PointingHandCursor)
         self.close_button.clicked.connect(QApplication.quit)
-        self.close_button.setStyleSheet(
-            btn_top_style.replace("rgba(255, 255, 255, 0.15)", "#e81123")
-        )
+        self.close_button.setStyleSheet(btn_top_style.replace("rgba(255, 255, 255, 0.15)", "#e81123"))
 
         top_bar.addWidget(self.title_label)
         top_bar.addStretch()
         top_bar.addWidget(self.source_badge)
-        top_bar.addWidget(self.fav_button)
         top_bar.addWidget(self.lock_button)
         top_bar.addWidget(self.close_button)
         container_layout.addLayout(top_bar)
@@ -290,25 +457,19 @@ class SpotifyPip(QWidget):
         self.prev_label = QLabel("")
         self.prev_label.setWordWrap(True)
         self.prev_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.prev_label.setStyleSheet(
-            "color: rgba(255, 255, 255, 0.5); font-size: 13px; font-weight: 500;"
-        )
+        self.prev_label.setStyleSheet("color: rgba(255, 255, 255, 0.5); font-size: 13px; font-weight: 500;")
         lyrics_layout.addWidget(self.prev_label)
 
         self.curr_label = QLabel("In attesa di Spotify...")
         self.curr_label.setWordWrap(True)
         self.curr_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.curr_label.setStyleSheet(
-            "color: #1DB954; font-size: 17px; font-weight: bold;"
-        )
+        self.curr_label.setStyleSheet("color: #1DB954; font-size: 17px; font-weight: bold;")
         lyrics_layout.addWidget(self.curr_label)
 
         self.next_label = QLabel("")
         self.next_label.setWordWrap(True)
         self.next_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.next_label.setStyleSheet(
-            "color: rgba(255, 255, 255, 0.6); font-size: 14px; font-weight: 500;"
-        )
+        self.next_label.setStyleSheet("color: rgba(255, 255, 255, 0.6); font-size: 14px; font-weight: 500;")
         lyrics_layout.addWidget(self.next_label)
 
         container_layout.addLayout(lyrics_layout, 1)
@@ -316,7 +477,7 @@ class SpotifyPip(QWidget):
         # --- BARRA INFERIORE ---
         bottom_bar = QHBoxLayout()
         bottom_bar.setContentsMargins(0, 0, 0, 0)
-
+        
         self.media_widget = QWidget()
         media_layout = QHBoxLayout(self.media_widget)
         media_layout.setContentsMargins(0, 0, 0, 0)
@@ -347,11 +508,9 @@ class SpotifyPip(QWidget):
 
         self.size_grip = QSizeGrip(self)
         self.size_grip.setFixedSize(20, 20)
-        self.size_grip.setStyleSheet(
-            "QSizeGrip { width: 16px; height: 16px; image: none; }"
-        )
+        self.size_grip.setStyleSheet("QSizeGrip { width: 16px; height: 16px; image: none; }")
         bottom_bar.addWidget(self.size_grip)
-
+        
         container_layout.addLayout(bottom_bar)
         main_layout.addWidget(self.container)
 
@@ -364,152 +523,157 @@ class SpotifyPip(QWidget):
         self.unlock_win = None
         self.last_saved_geometry = self.geometry()
 
+        # Manteniamo la stessa finestra nativa per tutta la vita dell'app.
+        # Il passaggio lock/unlock usa X11/XWayland invece di setWindowFlags().
+        self.x11_wm = X11WindowManager()
+        self._x11_window_id = None
+        self._x11_geometry_timer = QTimer(self)
+        self._x11_geometry_timer.timeout.connect(self.ensure_always_on_top)
+        self._x11_geometry_timer.start(1500)
+
         self.timer = QTimer(self)
         self.timer.timeout.connect(self.update_state)
         self.timer.start(200)
 
-        # --- WATCHDOG: ri-afferma always-on-top ogni secondo ---
-        self.top_timer = QTimer(self)
-        self.top_timer.timeout.connect(self._enforce_on_top)
-        self.top_timer.start(1000)
+    # --- CLICK-THROUGH STABILE SENZA RESET DELLA FINESTRA ---
+    def _ensure_x11_window(self):
+        if self._x11_window_id:
+            return self._x11_window_id
 
-        # Forza lo stato iniziale del cuore
-        self.check_is_favorite("")
+        try:
+            self._x11_window_id = int(self.winId())
+        except Exception:
+            self._x11_window_id = None
+        return self._x11_window_id
 
-    # --- WATCHDOG ---
-    def _enforce_on_top(self):
-        """Su XWayland/GNOME l'above può essere perso: lo ri-affermiamo periodicamente."""
-        if not self.isVisible():
-            return
-        self.raise_()
+    def _apply_input_mode(self, transparent):
+        xid = self._ensure_x11_window()
+        if not xid or not self.x11_wm.available:
+            # Fallback per backend non-X11: evita comunque gli eventi Qt locali.
+            self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, transparent)
+            return False
+
+        if not transparent:
+            self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, False)
+
+        width = max(1, self.width())
+        height = max(1, self.height())
+        applied = self.x11_wm.set_input_transparent(
+            xid,
+            transparent,
+            width,
+            height,
+        )
+
+        if applied:
+            self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, False)
+        return applied
+
+    def ensure_always_on_top(self):
+        xid = self._ensure_x11_window()
+        if xid and self.x11_wm.available:
+            self.x11_wm.set_always_on_top(xid)
+
         if self.unlock_win and self.unlock_win.isVisible():
-            self.unlock_win.keep_on_top()
+            try:
+                unlock_xid = int(self.unlock_win.winId())
+            except Exception:
+                unlock_xid = 0
+            if unlock_xid and self.x11_wm.available:
+                self.x11_wm.set_always_on_top(unlock_xid)
 
-    # --- FUNZIONE PREFERITI LOCALI ---
-    def toggle_favorite(self):
-        if not self.current_track:
-            return
-        try:
-            favorites = []
-            if FAVORITES_FILE.exists():
-                favorites = [
-                    line.strip()
-                    for line in FAVORITES_FILE.read_text(encoding="utf-8").splitlines()
-                    if line.strip()
-                ]
+    def showEvent(self, event):
+        super().showEvent(event)
+        self._ensure_x11_window()
+        self.ensure_always_on_top()
+        if self.is_locked:
+            self._apply_input_mode(True)
 
-            if self.current_track in favorites:
-                favorites.remove(self.current_track)
-                self.fav_button.setText("♡")
-            else:
-                favorites.append(self.current_track)
-                self.fav_button.setText("♥")
+    def focusOutEvent(self, event):
+        super().focusOutEvent(event)
+        # Non usa raise_()/activateWindow(): non dobbiamo rubare il focus,
+        # ma solo ribadire ad XWayland/Mutter che questa finestra resta sopra.
+        QTimer.singleShot(0, self.ensure_always_on_top)
 
-            FAVORITES_FILE.write_text("\n".join(favorites) + "\n", encoding="utf-8")
-        except Exception:
-            pass
-
-    def check_is_favorite(self, track_id):
-        try:
-            if track_id and FAVORITES_FILE.exists():
-                favorites = [
-                    line.strip()
-                    for line in FAVORITES_FILE.read_text(encoding="utf-8").splitlines()
-                    if line.strip()
-                ]
-                if track_id in favorites:
-                    self.fav_button.setText("♥")
-                    return
-        except Exception:
-            pass
-        self.fav_button.setText("♡")
-
-    # --- CLICK-THROUGH (senza ricreare la finestra) ---
     def lock_ui(self):
         self.is_locked = True
         self.last_saved_geometry = self.geometry()
         pos = self.lock_button.mapToGlobal(QPoint(0, 0))
 
-        # 1) Applica il flag X11 SENZA ricreare la finestra
-        self.setWindowFlag(Qt.WindowType.WindowTransparentForInput, True)
-        self.setWindowFlag(Qt.WindowType.WindowStaysOnTopHint, True)
-        self.setGeometry(self.last_saved_geometry)
+        # Nascondi elementi accessori ma NON toccare la struttura/widget tree
+        # che renderizza i testi.
+        self.lock_button.hide()
+        self.close_button.hide()
+        self.title_label.hide()
+        self.source_badge.hide()
+        self.media_widget.hide()
+        self.size_grip.hide()
+        self.container.setStyleSheet("background-color: transparent; border: none;")
+
+        # XWayland: click-through senza setWindowFlags(), quindi nessuna
+        # ricreazione del native window e nessuna perdita del rendering Qt.
+        self._apply_input_mode(True)
         self.show()
-        self.raise_()
+        self.update()
+        self.container.update()
+        self.ensure_always_on_top()
 
-        # 2) Nascondi i controlli DOPO il cambio flag (evita reset di Qt)
-        def _hide_controls():
-            self.fav_button.hide()
-            self.lock_button.hide()
-            self.close_button.hide()
-            self.title_label.hide()
-            self.source_badge.hide()
-            self.media_widget.hide()
-            self.size_grip.hide()
-            # Sfondo più tenue ma testo comunque visibile
-            self.container.setStyleSheet("""
-                #container {
-                    background-color: rgba(18, 18, 18, 0.25);
-                    border-radius: 12px;
-                    border: 1px solid rgba(255, 255, 255, 0.05);
-                }
-            """)
-            # Forza il ridisegno dei label dei testi
-            for lbl in (self.prev_label, self.curr_label, self.next_label):
-                lbl.show()
-                lbl.repaint()
-
-        QTimer.singleShot(0, _hide_controls)
-
-        # 3) Mostra il pulsante di sblocco
+        # Mostra il pulsante di sblocco nella stessa posizione.
         if not self.unlock_win:
             self.unlock_win = UnlockButton(self)
         self.unlock_win.move(pos)
         self.unlock_win.show()
         self.unlock_win.raise_()
+        self.ensure_always_on_top()
 
     def unlock_ui(self):
         self.is_locked = False
 
+        # 1. Rimuovi il pulsante di sblocco.
         if self.unlock_win:
             self.unlock_win.hide()
 
-        # 1) Rimuovi il click-through SENZA ricreare
-        self.setWindowFlag(Qt.WindowType.WindowTransparentForInput, False)
-        self.setWindowFlag(Qt.WindowType.WindowStaysOnTopHint, True)
+        # 2. Ripristina la Input Shape senza modificare i Window Flags.
+        self._apply_input_mode(False)
+
+        # 3. Ripristina geometria/visibilità e ribadisci l'Always-On-Top.
         self.setGeometry(self.last_saved_geometry)
         self.show()
         self.raise_()
         self.activateWindow()
+        self.ensure_always_on_top()
 
-        # 2) Ripristina i controlli DOPO il cambio flag
-        def _show_controls():
-            self.fav_button.show()
-            self.lock_button.show()
-            self.close_button.show()
-            self.title_label.show()
-            self.source_badge.show()
-            self.media_widget.show()
-            self.size_grip.show()
-            self.container.setStyleSheet("""
-                #container {
-                    background-color: rgba(18, 18, 18, 0.45);
-                    border-radius: 12px;
-                    border: 1px solid rgba(255, 255, 255, 0.1);
-                }
-            """)
-            for lbl in (self.prev_label, self.curr_label, self.next_label):
-                lbl.show()
-                lbl.repaint()
+        # 4. Mostra nuovamente i controlli.
+        self.lock_button.show()
+        self.close_button.show()
+        self.title_label.show()
+        self.source_badge.show()
+        self.media_widget.show()
+        self.size_grip.show()
 
-        QTimer.singleShot(0, _show_controls)
+        self.container.setStyleSheet("""
+            #container {
+                background-color: rgba(18, 18, 18, 0.45);
+                border-radius: 12px;
+                border: 1px solid rgba(255, 255, 255, 0.1);
+            }
+        """)
+        self.update()
+        self.container.update()
+
+        # Fallback leggero per Mutter/XWayland dopo la transizione.
+        QTimer.singleShot(50, self.ensure_always_on_top)
+        QTimer.singleShot(100, self.ensure_always_on_top)
+
+    def closeEvent(self, event):
+        if self.x11_wm:
+            self.x11_wm.close()
+        super().closeEvent(event)
 
     # --- TRASCINAMENTO ---
     def mousePressEvent(self, event):
         if not self.is_locked and event.button() == Qt.MouseButton.LeftButton:
-            self.drag_position = (
-                event.globalPosition().toPoint() - self.frameGeometry().topLeft()
-            )
+            self.drag_position = event.globalPosition().toPoint() - self.frameGeometry().topLeft()
             event.accept()
 
     def mouseMoveEvent(self, event):
@@ -520,15 +684,9 @@ class SpotifyPip(QWidget):
 
     def run_cmd(self, args):
         try:
-            res = subprocess.run(
-                ["playerctl", "-p", "spotify"] + args,
-                capture_output=True,
-                text=True,
-                check=True,
-            )
+            res = subprocess.run(["playerctl", "-p", "spotify"] + args, capture_output=True, text=True, check=True)
             return res.stdout.strip()
-        except Exception:
-            return None
+        except Exception: return None
 
     def on_lyrics_found(self, lyrics, source):
         self.lyrics = lyrics
@@ -551,9 +709,7 @@ class SpotifyPip(QWidget):
         if self.worker and self.worker.isRunning():
             self.worker.terminate()
 
-        self.worker = LyricsFetcherWorker(
-            artist, title, duration, ignore_cache=ignore_cache
-        )
+        self.worker = LyricsFetcherWorker(artist, title, duration, ignore_cache=ignore_cache)
         self.worker.lyrics_found.connect(self.on_lyrics_found)
         self.worker.lyrics_failed.connect(self.on_lyrics_failed)
         self.worker.start()
@@ -565,117 +721,87 @@ class SpotifyPip(QWidget):
         length_str = self.run_cmd(["metadata", "mpris:length"])
         status = self.run_cmd(["status"])
 
-        if status == "Playing":
-            self.btn_play.setText("⏸")
-        else:
-            self.btn_play.setText("▶")
+        if status == "Playing": self.btn_play.setText("⏸")
+        else: self.btn_play.setText("▶")
 
         if not title or not artist or position_str is None:
-            if not self.is_locked:
-                self.title_label.setText("Spotify disconnesso")
+            if not self.is_locked: self.title_label.setText("Spotify disconnesso")
             self.source_badge.setText("")
             self.prev_label.setText("")
             self.curr_label.setText("Spotify in pausa o non attivo")
             self.next_label.setText("")
-            self.fav_button.setText("♡")
             return
 
         track_id = f"{artist} - {title}"
         if track_id != self.current_track:
             self.current_track = track_id
             display_title = (track_id[:45] + "...") if len(track_id) > 45 else track_id
-            if not self.is_locked:
-                self.title_label.setText(display_title)
+            if not self.is_locked: self.title_label.setText(display_title)
             self.source_badge.setText("Caricamento...")
             self.prev_label.setText("")
             self.curr_label.setText(f"Caricamento:\n{title}")
             self.next_label.setText("")
             self.lyrics = []
             self.current_line_idx = -1
-            self.check_is_favorite(track_id)
             self.start_fetch(artist, title, length_str, ignore_cache=False)
 
-        if not self.lyrics:
-            return
-        try:
-            current_time = float(position_str)
-        except ValueError:
-            return
+        if not self.lyrics: return
+        try: current_time = float(position_str)
+        except ValueError: return
 
         idx = -1
         for i, (timestamp, text) in enumerate(self.lyrics):
-            if current_time >= timestamp:
-                idx = i
-            else:
-                break
+            if current_time >= timestamp: idx = i
+            else: break
 
         if idx != self.current_line_idx:
             self.current_line_idx = idx
             if idx == -1:
                 self.prev_label.setText("")
                 self.curr_label.setText("...")
-                self.next_label.setText(
-                    self.lyrics[0][1] if len(self.lyrics) > 0 else ""
-                )
+                self.next_label.setText(self.lyrics[0][1] if len(self.lyrics) > 0 else "")
             else:
                 self.prev_label.setText(self.lyrics[idx - 1][1] if idx > 0 else "")
-                self.curr_label.setText(
-                    self.lyrics[idx][1] if self.lyrics[idx][1] else "..."
-                )
-                self.next_label.setText(
-                    self.lyrics[idx + 1][1] if idx + 1 < len(self.lyrics) else ""
-                )
-
-            # Forza il repaint quando bloccata (evita testi "spariti")
-            if self.is_locked:
-                for lbl in (self.prev_label, self.curr_label, self.next_label):
-                    lbl.repaint()
+                self.curr_label.setText(self.lyrics[idx][1] if self.lyrics[idx][1] else "...")
+                self.next_label.setText(self.lyrics[idx + 1][1] if idx + 1 < len(self.lyrics) else "")
 
     def keyPressEvent(self, event):
-        if event.key() in (Qt.Key.Key_Escape, Qt.Key.Key_Q):
+        if event.key() in (Qt.Key.Key_Escape, Qt.Key.Key_Q): 
             QApplication.quit()
 
     def contextMenuEvent(self, event):
-        if self.is_locked:
-            return
+        if self.is_locked: return
         menu = QMenu(self)
         reload_action = menu.addAction("Ricarica (usa cache)")
         force_reload_action = menu.addAction("Ricarica e riscarica (ignora cache)")
         menu.addSeparator()
         close_action = menu.addAction("Chiudi")
-
+        
         action = menu.exec(self.mapToGlobal(event.pos()))
-        if action == close_action:
-            QApplication.quit()
-        elif action == reload_action:
-            self.current_track = ""
+        if action == close_action: QApplication.quit()
+        elif action == reload_action: self.current_track = ""
         elif action == force_reload_action:
-            title = self.run_cmd(["metadata", "title"])
-            artist = self.run_cmd(["metadata", "artist"])
-            length_str = self.run_cmd(["metadata", "mpris:length"])
+            title, artist, length_str = self.run_cmd(["metadata", "title"]), self.run_cmd(["metadata", "artist"]), self.run_cmd(["metadata", "mpris:length"])
             if artist and title:
-                cache_file = CACHE_DIR / (
-                    f"{re.sub(r'[^\\w\\-.]', '_', f'{artist}_-_{title}'.lower())}.lrc"
-                )
+                cache_file = CACHE_DIR / f"{re.sub(r'[^\w\-.]', '_', f'{artist}_-_{title}'.lower())}.lrc"
                 if cache_file.exists():
-                    try:
-                        cache_file.unlink()
-                    except Exception:
-                        pass
+                    try: cache_file.unlink()
+                    except Exception: pass
                 self.source_badge.setText("Riscaricamento...")
                 self.start_fetch(artist, title, length_str, ignore_cache=True)
 
-
 if __name__ == "__main__":
     app = QApplication(sys.argv)
-
+    
+    # 1. Identificativi freedesktop / GNOME per associare la finestra a spotipip.desktop
     app.setApplicationName("Spotipip")
     app.setDesktopFileName("spotipip")
-
+    
+    # 2. Imposta l'icona globale dell'applicazione
     icon = QIcon.fromTheme("spotipip", QIcon("spotipip.png"))
     if not icon.isNull():
         app.setWindowIcon(icon)
-
+        
     window = SpotifyPip()
     window.show()
     sys.exit(app.exec())

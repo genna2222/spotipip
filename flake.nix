@@ -25,8 +25,8 @@
         );
 
         spotifyPipPkg = pkgs.stdenv.mkDerivation {
-          pname = "spotify-pip";
-          version = "1.0.3";
+          pname = "spotipip";
+          version = "1.0.4";
 
           src = ./.;
 
@@ -43,6 +43,7 @@
             makeWrapper ${pythonEnv}/bin/python $out/bin/spotipip \
               --add-flags "$out/lib/spotipip/spotify_pip.py" \
               --set QT_QPA_PLATFORM xcb \
+              --prefix LD_LIBRARY_PATH : "${pkgs.lib.makeLibraryPath [ pkgs.xorg.libX11 pkgs.xorg.libXfixes ]}" \
               --prefix XDG_DATA_DIRS : "$out/share" \
               --prefix PATH : ${
                 pkgs.lib.makeBinPath [
@@ -64,10 +65,10 @@
 
           meta = with pkgs.lib; {
             description = "Finestra flottante Picture-in-Picture con testi sincronizzati per Spotify";
-            homepage = "https://github.com/user/spotify-pip";
+            homepage = "https://github.com/genna2222/spotipip";
             license = licenses.mit;
             platforms = platforms.linux;
-            mainProgram = "spotify-pip";
+            mainProgram = "spotipip";
           };
         };
       in
@@ -83,9 +84,12 @@
             pythonEnv
             pkgs.playerctl
             pkgs.xdg-utils
+            pkgs.xorg.libX11
+            pkgs.xorg.libXfixes
           ];
           shellHook = ''
             export QT_QPA_PLATFORM=xcb
+            export LD_LIBRARY_PATH="${pkgs.lib.makeLibraryPath [ pkgs.xorg.libX11 pkgs.xorg.libXfixes ]}:$LD_LIBRARY_PATH"
           '';
         };
       }
