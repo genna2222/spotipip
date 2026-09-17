@@ -7,7 +7,7 @@ from pathlib import Path
 from PyQt6.QtCore import Qt, QTimer, QPoint, QThread, pyqtSignal
 from PyQt6.QtGui import QIcon
 from PyQt6.QtWidgets import (
-    QApplication, QLabel, QWidget, QVBoxLayout, 
+    QApplication, QLabel, QWidget, QVBoxLayout,
     QHBoxLayout, QPushButton, QSizeGrip, QMenu
 )
 
@@ -19,9 +19,16 @@ FAVORITES_FILE = CACHE_DIR / "favorites.txt"
 # --- PULSANTE DI SBLOCCO FLUTTUANTE SEPARATO ---
 class UnlockButton(QWidget):
     def __init__(self, main_window):
-        super().__init__(None, Qt.WindowType.WindowStaysOnTopHint | Qt.WindowType.FramelessWindowHint | Qt.WindowType.Tool)
+        super().__init__(
+            None,
+            Qt.WindowType.WindowStaysOnTopHint
+            | Qt.WindowType.FramelessWindowHint
+            | Qt.WindowType.Tool
+            | Qt.WindowType.X11BypassWindowManagerHint,
+        )
         self.main_window = main_window
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+        self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating)
         self.setFixedSize(30, 30)
 
         layout = QVBoxLayout(self)
@@ -44,6 +51,10 @@ class UnlockButton(QWidget):
         """)
         self.btn.clicked.connect(self.main_window.unlock_ui)
         layout.addWidget(self.btn)
+
+    def keep_on_top(self):
+        self.raise_()
+        self.show()
 
 
 # --- THREAD ASINCRONO CON SUPPORTO CACHE ---
@@ -69,14 +80,16 @@ class LyricsFetcherWorker(QThread):
     def save_to_cache(self, lrc_text):
         try:
             self.get_cache_filepath().write_text(lrc_text, encoding="utf-8")
-        except Exception: pass
+        except Exception:
+            pass
 
     def load_from_cache(self):
         try:
             cache_file = self.get_cache_filepath()
             if cache_file.exists():
                 return cache_file.read_text(encoding="utf-8")
-        except Exception: pass
+        except Exception:
+            pass
         return None
 
     def clean_query(self, text):
@@ -106,34 +119,48 @@ class LyricsFetcherWorker(QThread):
     def fetch_lrclib_exact(self, clean_title):
         try:
             params = {"artist_name": self.artist, "track_name": clean_title}
-            if self.duration: params["duration"] = int(self.duration)
+            if self.duration:
+                params["duration"] = int(self.duration)
             res = self.session.get("https://lrclib.net/api/get", params=params, timeout=3.5)
             if res.status_code == 200 and res.json().get("syncedLyrics"):
                 return res.json()["syncedLyrics"]
-        except Exception: pass
+        except Exception:
+            pass
         return None
 
     def fetch_lrclib_search(self, clean_title):
         try:
             query = f"{self.artist} {clean_title}"
-            res = self.session.get("https://lrclib.net/api/search", params={"q": query}, timeout=3.5)
+            res = self.session.get(
+                "https://lrclib.net/api/search", params={"q": query}, timeout=3.5
+            )
             if res.status_code == 200:
                 for item in res.json():
-                    if item.get("syncedLyrics"): return item["syncedLyrics"]
-        except Exception: pass
+                    if item.get("syncedLyrics"):
+                        return item["syncedLyrics"]
+        except Exception:
+            pass
         return None
 
     def fetch_netease(self, clean_title):
         try:
             search_url = "https://music.163.com/api/search/get/web"
-            res = self.session.post(search_url, data={"s": f"{self.artist} {clean_title}", "type": 1, "offset": 0, "limit": 3}, timeout=4)
+            res = self.session.post(
+                search_url,
+                data={"s": f"{self.artist} {clean_title}", "type": 1, "offset": 0, "limit": 3},
+                timeout=4,
+            )
             if res.status_code == 200:
                 songs = res.json().get("result", {}).get("songs", [])
                 if songs:
-                    l_res = self.session.get(f"https://music.163.com/api/song/lyric?id={songs[0]['id']}&lv=1&tv=-1", timeout=4)
+                    l_res = self.session.get(
+                        f"https://music.163.com/api/song/lyric?id={songs[0]['id']}&lv=1&tv=-1",
+                        timeout=4,
+                    )
                     if l_res.status_code == 200:
                         return l_res.json().get("lrc", {}).get("lyric")
-        except Exception: pass
+        except Exception:
+            pass
         return None
 
     def run(self):
@@ -146,9 +173,11 @@ class LyricsFetcherWorker(QThread):
                     return
 
         clean_title = self.clean_query(self.title)
-        raw_lrc = self.fetch_lrclib_exact(clean_title) or \
-                  self.fetch_lrclib_search(clean_title) or \
-                  self.fetch_netease(clean_title)
+        raw_lrc = (
+            self.fetch_lrclib_exact(clean_title)
+            or self.fetch_lrclib_search(clean_title)
+            or self.fetch_netease(clean_title)
+        )
 
         if raw_lrc:
             self.save_to_cache(raw_lrc)
@@ -163,15 +192,15 @@ class SpotifyPip(QWidget):
         super().__init__()
 
         self.base_flags = (
-            Qt.WindowType.WindowStaysOnTopHint | 
-            Qt.WindowType.FramelessWindowHint | 
-            Qt.WindowType.Window
+            Qt.WindowType.WindowStaysOnTopHint
+            | Qt.WindowType.FramelessWindowHint
+            | Qt.WindowType.Window
         )
 
         self.setWindowTitle("Spotipip")
         self.setWindowFlags(self.base_flags)
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
-        
+
         app_icon = QIcon.fromTheme("spotipip", QIcon("spotipip.png"))
         if not app_icon.isNull():
             self.setWindowIcon(app_icon)
@@ -201,10 +230,14 @@ class SpotifyPip(QWidget):
         top_bar.setContentsMargins(0, 0, 0, 0)
 
         self.title_label = QLabel("Spotipip")
-        self.title_label.setStyleSheet("color: #cccccc; font-size: 11px; font-weight: bold;")
-        
+        self.title_label.setStyleSheet(
+            "color: #cccccc; font-size: 11px; font-weight: bold;"
+        )
+
         self.source_badge = QLabel("")
-        self.source_badge.setStyleSheet("color: #aaaaaa; font-size: 10px; padding-right: 6px;")
+        self.source_badge.setStyleSheet(
+            "color: #aaaaaa; font-size: 10px; padding-right: 6px;"
+        )
 
         btn_top_style = """
             QPushButton {
@@ -219,12 +252,12 @@ class SpotifyPip(QWidget):
         """
 
         # Pulsante Cuore Preferiti
-        self.fav_button = QPushButton("🤍")
+        self.fav_button = QPushButton("♡")
         self.fav_button.setFixedSize(26, 26)
         self.fav_button.setCursor(Qt.CursorShape.PointingHandCursor)
         self.fav_button.setToolTip("Aggiungi ai preferiti locali")
         self.fav_button.clicked.connect(self.toggle_favorite)
-        self.fav_button.setStyleSheet(btn_top_style)
+        self.fav_button.setStyleSheet(btn_top_style + "QPushButton { font-size: 17px; }")
 
         self.lock_button = QPushButton("📌")
         self.lock_button.setFixedSize(26, 26)
@@ -237,7 +270,9 @@ class SpotifyPip(QWidget):
         self.close_button.setFixedSize(26, 26)
         self.close_button.setCursor(Qt.CursorShape.PointingHandCursor)
         self.close_button.clicked.connect(QApplication.quit)
-        self.close_button.setStyleSheet(btn_top_style.replace("rgba(255, 255, 255, 0.15)", "#e81123"))
+        self.close_button.setStyleSheet(
+            btn_top_style.replace("rgba(255, 255, 255, 0.15)", "#e81123")
+        )
 
         top_bar.addWidget(self.title_label)
         top_bar.addStretch()
@@ -255,19 +290,25 @@ class SpotifyPip(QWidget):
         self.prev_label = QLabel("")
         self.prev_label.setWordWrap(True)
         self.prev_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.prev_label.setStyleSheet("color: rgba(255, 255, 255, 0.5); font-size: 13px; font-weight: 500;")
+        self.prev_label.setStyleSheet(
+            "color: rgba(255, 255, 255, 0.5); font-size: 13px; font-weight: 500;"
+        )
         lyrics_layout.addWidget(self.prev_label)
 
         self.curr_label = QLabel("In attesa di Spotify...")
         self.curr_label.setWordWrap(True)
         self.curr_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.curr_label.setStyleSheet("color: #1DB954; font-size: 17px; font-weight: bold;")
+        self.curr_label.setStyleSheet(
+            "color: #1DB954; font-size: 17px; font-weight: bold;"
+        )
         lyrics_layout.addWidget(self.curr_label)
 
         self.next_label = QLabel("")
         self.next_label.setWordWrap(True)
         self.next_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.next_label.setStyleSheet("color: rgba(255, 255, 255, 0.6); font-size: 14px; font-weight: 500;")
+        self.next_label.setStyleSheet(
+            "color: rgba(255, 255, 255, 0.6); font-size: 14px; font-weight: 500;"
+        )
         lyrics_layout.addWidget(self.next_label)
 
         container_layout.addLayout(lyrics_layout, 1)
@@ -275,7 +316,7 @@ class SpotifyPip(QWidget):
         # --- BARRA INFERIORE ---
         bottom_bar = QHBoxLayout()
         bottom_bar.setContentsMargins(0, 0, 0, 0)
-        
+
         self.media_widget = QWidget()
         media_layout = QHBoxLayout(self.media_widget)
         media_layout.setContentsMargins(0, 0, 0, 0)
@@ -306,9 +347,11 @@ class SpotifyPip(QWidget):
 
         self.size_grip = QSizeGrip(self)
         self.size_grip.setFixedSize(20, 20)
-        self.size_grip.setStyleSheet("QSizeGrip { width: 16px; height: 16px; image: none; }")
+        self.size_grip.setStyleSheet(
+            "QSizeGrip { width: 16px; height: 16px; image: none; }"
+        )
         bottom_bar.addWidget(self.size_grip)
-        
+
         container_layout.addLayout(bottom_bar)
         main_layout.addWidget(self.container)
 
@@ -325,6 +368,23 @@ class SpotifyPip(QWidget):
         self.timer.timeout.connect(self.update_state)
         self.timer.start(200)
 
+        # --- WATCHDOG: ri-afferma always-on-top ogni secondo ---
+        self.top_timer = QTimer(self)
+        self.top_timer.timeout.connect(self._enforce_on_top)
+        self.top_timer.start(1000)
+
+        # Forza lo stato iniziale del cuore
+        self.check_is_favorite("")
+
+    # --- WATCHDOG ---
+    def _enforce_on_top(self):
+        """Su XWayland/GNOME l'above può essere perso: lo ri-affermiamo periodicamente."""
+        if not self.isVisible():
+            return
+        self.raise_()
+        if self.unlock_win and self.unlock_win.isVisible():
+            self.unlock_win.keep_on_top()
+
     # --- FUNZIONE PREFERITI LOCALI ---
     def toggle_favorite(self):
         if not self.current_track:
@@ -332,14 +392,18 @@ class SpotifyPip(QWidget):
         try:
             favorites = []
             if FAVORITES_FILE.exists():
-                favorites = [line.strip() for line in FAVORITES_FILE.read_text(encoding="utf-8").splitlines() if line.strip()]
+                favorites = [
+                    line.strip()
+                    for line in FAVORITES_FILE.read_text(encoding="utf-8").splitlines()
+                    if line.strip()
+                ]
 
             if self.current_track in favorites:
                 favorites.remove(self.current_track)
-                self.fav_button.setText("🤍")
+                self.fav_button.setText("♡")
             else:
                 favorites.append(self.current_track)
-                self.fav_button.setText("❤️")
+                self.fav_button.setText("♥")
 
             FAVORITES_FILE.write_text("\n".join(favorites) + "\n", encoding="utf-8")
         except Exception:
@@ -347,39 +411,57 @@ class SpotifyPip(QWidget):
 
     def check_is_favorite(self, track_id):
         try:
-            if FAVORITES_FILE.exists():
-                favorites = [line.strip() for line in FAVORITES_FILE.read_text(encoding="utf-8").splitlines() if line.strip()]
+            if track_id and FAVORITES_FILE.exists():
+                favorites = [
+                    line.strip()
+                    for line in FAVORITES_FILE.read_text(encoding="utf-8").splitlines()
+                    if line.strip()
+                ]
                 if track_id in favorites:
-                    self.fav_button.setText("❤️")
+                    self.fav_button.setText("♥")
                     return
         except Exception:
             pass
-        self.fav_button.setText("🤍")
+        self.fav_button.setText("♡")
 
-    # --- CLICK-THROUGH (IDENTICO AL TUO CHE FUNZIONA, PIÙ HIDE DEL CUORE) ---
+    # --- CLICK-THROUGH (senza ricreare la finestra) ---
     def lock_ui(self):
         self.is_locked = True
         self.last_saved_geometry = self.geometry()
         pos = self.lock_button.mapToGlobal(QPoint(0, 0))
 
-        # Nascondi elementi accessori (incluso il cuore)
-        self.fav_button.hide()
-        self.lock_button.hide()
-        self.close_button.hide()
-        self.title_label.hide()
-        self.source_badge.hide()
-        self.media_widget.hide()
-        self.size_grip.hide()
-        self.container.setStyleSheet("background-color: transparent; border: none;")
-
-        # Stessa identica logica del tuo codice (NESSUN self.hide())
-        self.setWindowFlags(self.base_flags | Qt.WindowType.WindowTransparentForInput)
+        # 1) Applica il flag X11 SENZA ricreare la finestra
+        self.setWindowFlag(Qt.WindowType.WindowTransparentForInput, True)
+        self.setWindowFlag(Qt.WindowType.WindowStaysOnTopHint, True)
         self.setGeometry(self.last_saved_geometry)
-        self.setVisible(True)
         self.show()
         self.raise_()
 
-        # Mostra il pulsante di sblocco nella stessa posizione
+        # 2) Nascondi i controlli DOPO il cambio flag (evita reset di Qt)
+        def _hide_controls():
+            self.fav_button.hide()
+            self.lock_button.hide()
+            self.close_button.hide()
+            self.title_label.hide()
+            self.source_badge.hide()
+            self.media_widget.hide()
+            self.size_grip.hide()
+            # Sfondo più tenue ma testo comunque visibile
+            self.container.setStyleSheet("""
+                #container {
+                    background-color: rgba(18, 18, 18, 0.25);
+                    border-radius: 12px;
+                    border: 1px solid rgba(255, 255, 255, 0.05);
+                }
+            """)
+            # Forza il ridisegno dei label dei testi
+            for lbl in (self.prev_label, self.curr_label, self.next_label):
+                lbl.show()
+                lbl.repaint()
+
+        QTimer.singleShot(0, _hide_controls)
+
+        # 3) Mostra il pulsante di sblocco
         if not self.unlock_win:
             self.unlock_win = UnlockButton(self)
         self.unlock_win.move(pos)
@@ -388,45 +470,46 @@ class SpotifyPip(QWidget):
 
     def unlock_ui(self):
         self.is_locked = False
-        
-        # 1. Rimuovi il pulsante di sblocco
+
         if self.unlock_win:
             self.unlock_win.hide()
 
-        # 2. Ripristina i flag base senza trasparenza ai click
-        self.setWindowFlags(self.base_flags)
-        
-        # 3. Ripristina geometria e forza visibilità esplicita
+        # 1) Rimuovi il click-through SENZA ricreare
+        self.setWindowFlag(Qt.WindowType.WindowTransparentForInput, False)
+        self.setWindowFlag(Qt.WindowType.WindowStaysOnTopHint, True)
         self.setGeometry(self.last_saved_geometry)
-        self.setVisible(True)
         self.show()
         self.raise_()
         self.activateWindow()
 
-        # 4. Mostra nuovamente i controlli (incluso il cuore)
-        self.fav_button.show()
-        self.lock_button.show()
-        self.close_button.show()
-        self.title_label.show()
-        self.source_badge.show()
-        self.media_widget.show()
-        self.size_grip.show()
-        
-        self.container.setStyleSheet("""
-            #container {
-                background-color: rgba(18, 18, 18, 0.45);
-                border-radius: 12px;
-                border: 1px solid rgba(255, 255, 255, 0.1);
-            }
-        """)
+        # 2) Ripristina i controlli DOPO il cambio flag
+        def _show_controls():
+            self.fav_button.show()
+            self.lock_button.show()
+            self.close_button.show()
+            self.title_label.show()
+            self.source_badge.show()
+            self.media_widget.show()
+            self.size_grip.show()
+            self.container.setStyleSheet("""
+                #container {
+                    background-color: rgba(18, 18, 18, 0.45);
+                    border-radius: 12px;
+                    border: 1px solid rgba(255, 255, 255, 0.1);
+                }
+            """)
+            for lbl in (self.prev_label, self.curr_label, self.next_label):
+                lbl.show()
+                lbl.repaint()
 
-        # Fallback timer: ribadisce a XWayland di mantenere la finestra sopra
-        QTimer.singleShot(50, lambda: (self.setGeometry(self.last_saved_geometry), self.show(), self.raise_()))
+        QTimer.singleShot(0, _show_controls)
 
     # --- TRASCINAMENTO ---
     def mousePressEvent(self, event):
         if not self.is_locked and event.button() == Qt.MouseButton.LeftButton:
-            self.drag_position = event.globalPosition().toPoint() - self.frameGeometry().topLeft()
+            self.drag_position = (
+                event.globalPosition().toPoint() - self.frameGeometry().topLeft()
+            )
             event.accept()
 
     def mouseMoveEvent(self, event):
@@ -437,9 +520,15 @@ class SpotifyPip(QWidget):
 
     def run_cmd(self, args):
         try:
-            res = subprocess.run(["playerctl", "-p", "spotify"] + args, capture_output=True, text=True, check=True)
+            res = subprocess.run(
+                ["playerctl", "-p", "spotify"] + args,
+                capture_output=True,
+                text=True,
+                check=True,
+            )
             return res.stdout.strip()
-        except Exception: return None
+        except Exception:
+            return None
 
     def on_lyrics_found(self, lyrics, source):
         self.lyrics = lyrics
@@ -462,7 +551,9 @@ class SpotifyPip(QWidget):
         if self.worker and self.worker.isRunning():
             self.worker.terminate()
 
-        self.worker = LyricsFetcherWorker(artist, title, duration, ignore_cache=ignore_cache)
+        self.worker = LyricsFetcherWorker(
+            artist, title, duration, ignore_cache=ignore_cache
+        )
         self.worker.lyrics_found.connect(self.on_lyrics_found)
         self.worker.lyrics_failed.connect(self.on_lyrics_failed)
         self.worker.start()
@@ -474,23 +565,27 @@ class SpotifyPip(QWidget):
         length_str = self.run_cmd(["metadata", "mpris:length"])
         status = self.run_cmd(["status"])
 
-        if status == "Playing": self.btn_play.setText("⏸")
-        else: self.btn_play.setText("▶")
+        if status == "Playing":
+            self.btn_play.setText("⏸")
+        else:
+            self.btn_play.setText("▶")
 
         if not title or not artist or position_str is None:
-            if not self.is_locked: self.title_label.setText("Spotify disconnesso")
+            if not self.is_locked:
+                self.title_label.setText("Spotify disconnesso")
             self.source_badge.setText("")
             self.prev_label.setText("")
             self.curr_label.setText("Spotify in pausa o non attivo")
             self.next_label.setText("")
-            self.fav_button.setText("🤍")
+            self.fav_button.setText("♡")
             return
 
         track_id = f"{artist} - {title}"
         if track_id != self.current_track:
             self.current_track = track_id
             display_title = (track_id[:45] + "...") if len(track_id) > 45 else track_id
-            if not self.is_locked: self.title_label.setText(display_title)
+            if not self.is_locked:
+                self.title_label.setText(display_title)
             self.source_badge.setText("Caricamento...")
             self.prev_label.setText("")
             self.curr_label.setText(f"Caricamento:\n{title}")
@@ -500,61 +595,87 @@ class SpotifyPip(QWidget):
             self.check_is_favorite(track_id)
             self.start_fetch(artist, title, length_str, ignore_cache=False)
 
-        if not self.lyrics: return
-        try: current_time = float(position_str)
-        except ValueError: return
+        if not self.lyrics:
+            return
+        try:
+            current_time = float(position_str)
+        except ValueError:
+            return
 
         idx = -1
         for i, (timestamp, text) in enumerate(self.lyrics):
-            if current_time >= timestamp: idx = i
-            else: break
+            if current_time >= timestamp:
+                idx = i
+            else:
+                break
 
         if idx != self.current_line_idx:
             self.current_line_idx = idx
             if idx == -1:
                 self.prev_label.setText("")
                 self.curr_label.setText("...")
-                self.next_label.setText(self.lyrics[0][1] if len(self.lyrics) > 0 else "")
+                self.next_label.setText(
+                    self.lyrics[0][1] if len(self.lyrics) > 0 else ""
+                )
             else:
                 self.prev_label.setText(self.lyrics[idx - 1][1] if idx > 0 else "")
-                self.curr_label.setText(self.lyrics[idx][1] if self.lyrics[idx][1] else "...")
-                self.next_label.setText(self.lyrics[idx + 1][1] if idx + 1 < len(self.lyrics) else "")
+                self.curr_label.setText(
+                    self.lyrics[idx][1] if self.lyrics[idx][1] else "..."
+                )
+                self.next_label.setText(
+                    self.lyrics[idx + 1][1] if idx + 1 < len(self.lyrics) else ""
+                )
+
+            # Forza il repaint quando bloccata (evita testi "spariti")
+            if self.is_locked:
+                for lbl in (self.prev_label, self.curr_label, self.next_label):
+                    lbl.repaint()
 
     def keyPressEvent(self, event):
-        if event.key() in (Qt.Key.Key_Escape, Qt.Key.Key_Q): 
+        if event.key() in (Qt.Key.Key_Escape, Qt.Key.Key_Q):
             QApplication.quit()
 
     def contextMenuEvent(self, event):
-        if self.is_locked: return
+        if self.is_locked:
+            return
         menu = QMenu(self)
         reload_action = menu.addAction("Ricarica (usa cache)")
         force_reload_action = menu.addAction("Ricarica e riscarica (ignora cache)")
         menu.addSeparator()
         close_action = menu.addAction("Chiudi")
-        
+
         action = menu.exec(self.mapToGlobal(event.pos()))
-        if action == close_action: QApplication.quit()
-        elif action == reload_action: self.current_track = ""
+        if action == close_action:
+            QApplication.quit()
+        elif action == reload_action:
+            self.current_track = ""
         elif action == force_reload_action:
-            title, artist, length_str = self.run_cmd(["metadata", "title"]), self.run_cmd(["metadata", "artist"]), self.run_cmd(["metadata", "mpris:length"])
+            title = self.run_cmd(["metadata", "title"])
+            artist = self.run_cmd(["metadata", "artist"])
+            length_str = self.run_cmd(["metadata", "mpris:length"])
             if artist and title:
-                cache_file = CACHE_DIR / f"{re.sub(r'[^\w\-.]', '_', f'{artist}_-_{title}'.lower())}.lrc"
+                cache_file = CACHE_DIR / (
+                    f"{re.sub(r'[^\\w\\-.]', '_', f'{artist}_-_{title}'.lower())}.lrc"
+                )
                 if cache_file.exists():
-                    try: cache_file.unlink()
-                    except Exception: pass
+                    try:
+                        cache_file.unlink()
+                    except Exception:
+                        pass
                 self.source_badge.setText("Riscaricamento...")
                 self.start_fetch(artist, title, length_str, ignore_cache=True)
 
+
 if __name__ == "__main__":
     app = QApplication(sys.argv)
-    
+
     app.setApplicationName("Spotipip")
     app.setDesktopFileName("spotipip")
-    
+
     icon = QIcon.fromTheme("spotipip", QIcon("spotipip.png"))
     if not icon.isNull():
         app.setWindowIcon(icon)
-        
+
     window = SpotifyPip()
     window.show()
     sys.exit(app.exec())
