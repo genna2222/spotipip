@@ -347,41 +347,37 @@ class SpotifyPip(QWidget):
         self.unlock_win.show()
         self.unlock_win.raise_()
 
-    def unlock_ui(self):
-        self.is_locked = False
-        
-        # 1. Rimuovi il pulsante di sblocco
-        if self.unlock_win:
-            self.unlock_win.hide()
+ def unlock_ui(self):
+    self.is_locked = False
+    
+    if self.unlock_win:
+        self.unlock_win.hide()
 
-        # 2. Ripristina i flag base senza trasparenza ai click
-        self.setWindowFlags(self.base_flags)
-        
-        # 3. Ripristina geometria e forza visibilità esplicita
-        self.setGeometry(self.last_saved_geometry)
-        self.setVisible(True)
-        self.show()
-        self.raise_()
-        self.activateWindow()
+    # Ripristina i flag includendo sempre esplicitamente WindowStaysOnTopHint
+    self.setWindowFlags(self.base_flags)
+    
+    self.setGeometry(self.last_saved_geometry)
+    self.show()
+    self.raise_()
+    self.activateWindow()
 
-        # 4. Mostra nuovamente i controlli
-        self.lock_button.show()
-        self.close_button.show()
-        self.title_label.show()
-        self.source_badge.show()
-        self.media_widget.show()
-        self.size_grip.show()
-        
-        self.container.setStyleSheet("""
-            #container {
-                background-color: rgba(18, 18, 18, 0.45);
-                border-radius: 12px;
-                border: 1px solid rgba(255, 255, 255, 0.1);
-            }
-        """)
-
-        # Fallback timer: ribadisce a XWayland di renderizzare la finestra nella posizione corretta
-        QTimer.singleShot(50, lambda: (self.setGeometry(self.last_saved_geometry), self.show(), self.raise_()))
+    self.lock_button.show()
+    self.close_button.show()
+    self.title_label.show()
+    self.source_badge.show()
+    self.media_widget.show()
+    self.size_grip.show()
+    
+    self.container.setStyleSheet("""
+        #container {
+            background-color: rgba(18, 18, 18, 0.45);
+            border-radius: 12px;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+        }
+    """)
+    
+    # Forza il gestore finestre XWayland a mantenere la proprietà Above
+    QTimer.singleShot(20, lambda: (self.setWindowFlags(self.base_flags), self.show(), self.raise_()))
 
     # --- TRASCINAMENTO ---
     def mousePressEvent(self, event):
