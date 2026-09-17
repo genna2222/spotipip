@@ -6,15 +6,23 @@
     flake-utils.url = "github:numtide/flake-utils";
   };
 
-  outputs = { self, nixpkgs, flake-utils }:
-    flake-utils.lib.eachDefaultSystem (system:
+  outputs =
+    {
+      self,
+      nixpkgs,
+      flake-utils,
+    }:
+    flake-utils.lib.eachDefaultSystem (
+      system:
       let
         pkgs = import nixpkgs { inherit system; };
 
-        pythonEnv = pkgs.python3.withPackages (ps: with ps; [
-          pyqt6
-          requests
-        ]);
+        pythonEnv = pkgs.python3.withPackages (
+          ps: with ps; [
+            pyqt6
+            requests
+          ]
+        );
 
         spotifyPipPkg = pkgs.stdenv.mkDerivation {
           pname = "spotify-pip";
@@ -26,19 +34,31 @@
 
           installPhase = ''
             runHook preInstall
-
-            mkdir -p $out/lib/spotify-pip
-            cp spotify_pip.py $out/lib/spotify-pip/
+            mkdir -p $out/lib/spotipip
+            cp spotify_pip.py $out/lib/spotipip/
+            cp spotipip.png $out/lib/spotipip/
+            cp spotipip.svg $out/lib/spotipip/
 
             mkdir -p $out/bin
-            makeWrapper ${pythonEnv}/bin/python $out/bin/spotify-pip \
-              --add-flags "$out/lib/spotify-pip/spotify_pip.py" \
+            makeWrapper ${pythonEnv}/bin/python $out/bin/spotipip \
+              --add-flags "$out/lib/spotipip/spotify_pip.py" \
               --set QT_QPA_PLATFORM xcb \
-              --prefix PATH : ${pkgs.lib.makeBinPath [ pkgs.playerctl pkgs.xdg-utils ]}
+              --prefix XDG_DATA_DIRS : "$out/share" \
+              --prefix PATH : ${
+                pkgs.lib.makeBinPath [
+                  pkgs.playerctl
+                  pkgs.xdg-utils
+                ]
+              }
 
             mkdir -p $out/share/applications
-            cp spotipip $out/share/applications/
+            cp spotipip.desktop $out/share/applications/
 
+            mkdir -p $out/share/icons/hicolor/scalable/apps
+            cp spotipip.svg $out/share/icons/hicolor/scalable/apps/spotipip.svg
+
+            mkdir -p $out/share/icons/hicolor/256x256/apps
+            cp spotipip.png $out/share/icons/hicolor/256x256/apps/spotipip.png
             runHook postInstall
           '';
 
