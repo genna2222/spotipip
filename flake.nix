@@ -37,7 +37,7 @@
               --prefix PATH : ${pkgs.lib.makeBinPath [ pkgs.playerctl pkgs.xdg-utils ]}
 
             mkdir -p $out/share/applications
-            cp spotify-pip.desktop $out/share/applications/
+            cp spotipip $out/share/applications/
 
             runHook postInstall
           '';
