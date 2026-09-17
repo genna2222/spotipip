@@ -1,0 +1,9 @@
+[Desktop Entry]
+Name=Spotify PiP Lyrics
+Comment=Testi sincronizzati per Spotify in finestra Picture-in-Picture
+Exec=spotify-pip
+Icon=spotify
+Terminal=false
+Type=Application
+Categories=AudioVideo;Audio;Player;
+Keywords=spotify;lyrics;pip;karaoke;

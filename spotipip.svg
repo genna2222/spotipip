@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256">
+  <!-- Sfondo squircle scuro stile Spotify -->
+  <rect x="12" y="12" width="232" height="232" rx="52" ry="52" fill="#121212" stroke="#1ed760" stroke-width="8"/>
+  
+  <!-- Finestrella Picture-in-Picture interna -->
+  <rect x="42" y="46" width="172" height="158" rx="24" ry="24" fill="#1e1e1e" stroke="rgba(255,255,255,0.15)" stroke-width="3"/>
+  
+  <!-- Riga precedente (sfumata) -->
+  <rect x="66" y="80" width="75" height="10" rx="5" ry="5" fill="rgba(255,255,255,0.3)"/>
+  
+  <!-- Riga attiva corrente (verde Spotify brillante) -->
+  <rect x="66" y="112" width="124" height="14" rx="7" ry="7" fill="#1ed760"/>
+  
+  <!-- Riga successiva (semi-trasparente) -->
+  <rect x="66" y="148" width="95" height="10" rx="5" ry="5" fill="rgba(255,255,255,0.5)"/>
+  
+  <!-- Badge puntina PiP -->
+  <circle cx="188" cy="72" r="7" fill="#1ed760"/>
+</svg>
