@@ -1,9 +1,10 @@
 [Desktop Entry]
-Name=Spotify PiP Lyrics
-Comment=Testi sincronizzati per Spotify in finestra Picture-in-Picture
-Exec=spotify-pip
-Icon=spotify
+Name=Spotipip
+GenericName=Spotify PiP Lyrics
+Comment=Testi sincronizzati per Spotify in overlay Picture-in-Picture
+Exec=spotipip
+Icon=spotipip
 Terminal=false
 Type=Application
 Categories=AudioVideo;Audio;Player;
-Keywords=spotify;lyrics;pip;karaoke;
+StartupWMClass=Spotipip
