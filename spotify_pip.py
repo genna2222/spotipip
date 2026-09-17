@@ -363,7 +363,7 @@ class SpotifyPip(QWidget):
         self.last_saved_geometry = self.geometry()
         pos = self.lock_button.mapToGlobal(QPoint(0, 0))
 
-        # Nascondi elementi accessori, compreso il pulsante cuore
+        # Nascondi solo i pulsanti e l'interfaccia accessoria
         self.fav_button.hide()
         self.lock_button.hide()
         self.close_button.hide()
@@ -371,20 +371,25 @@ class SpotifyPip(QWidget):
         self.source_badge.hide()
         self.media_widget.hide()
         self.size_grip.hide()
+        
         self.container.setStyleSheet("background-color: transparent; border: none;")
 
-        # Fix per XWayland: Nascondi la finestra per forzare l'aggiornamento pulito dei Flag
-        self.hide()
+        # Applica i flag di click-through SENZA chiamare self.hide() prima
         self.setWindowFlags(self.base_flags | Qt.WindowType.WindowTransparentForInput)
+        
+        # Su X11/XWayland setWindowFlags chiude implicitamente la finestra, quindi la riapriamo subito
         self.setGeometry(self.last_saved_geometry)
         self.show()
-        self.raise_()
 
+        # Mostra il pulsante di sblocco
         if not self.unlock_win:
             self.unlock_win = UnlockButton(self)
         self.unlock_win.move(pos)
         self.unlock_win.show()
         self.unlock_win.raise_()
+
+        # Ritarda leggermente il repaint per assicurarsi che XWayland renderizzi i testi della canzone
+        QTimer.singleShot(50, lambda: (self.setGeometry(self.last_saved_geometry), self.show(), self.repaint()))
 
     def unlock_ui(self):
         self.is_locked = False
@@ -392,15 +397,13 @@ class SpotifyPip(QWidget):
         if self.unlock_win:
             self.unlock_win.hide()
 
-        # Rimuove il TransparentForInput e ristabilisce AlwaysOnTop rinegoziando con il Window Manager
-        self.hide()
+        # Ripristina i flag base (rimuove il click-through e rimette l'AlwaysOnTop)
         self.setWindowFlags(self.base_flags)
         self.setGeometry(self.last_saved_geometry)
         self.show()
-        self.raise_()
         self.activateWindow()
 
-        # Ripristina la visibilità degli elementi
+        # Mostra di nuovo tutti i controlli
         self.fav_button.show()
         self.lock_button.show()
         self.close_button.show()
@@ -416,6 +419,9 @@ class SpotifyPip(QWidget):
                 border: 1px solid rgba(255, 255, 255, 0.1);
             }
         """)
+
+        # Forza l'aggiornamento visivo finale
+        QTimer.singleShot(50, lambda: (self.setGeometry(self.last_saved_geometry), self.show(), self.repaint()))
 
     # --- TRASCINAMENTO ---
     def mousePressEvent(self, event):
