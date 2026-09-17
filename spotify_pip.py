@@ -218,7 +218,7 @@ class SpotifyPip(QWidget):
             QPushButton:hover { background: rgba(255, 255, 255, 0.15); color: white; }
         """
 
-        # Pulsante Preferiti
+        # Pulsante Cuore Preferiti
         self.fav_button = QPushButton("🤍")
         self.fav_button.setFixedSize(26, 26)
         self.fav_button.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -329,11 +329,10 @@ class SpotifyPip(QWidget):
     def toggle_favorite(self):
         if not self.current_track:
             return
-            
         try:
             favorites = []
             if FAVORITES_FILE.exists():
-                favorites = FAVORITES_FILE.read_text(encoding="utf-8").splitlines()
+                favorites = [line.strip() for line in FAVORITES_FILE.read_text(encoding="utf-8").splitlines() if line.strip()]
 
             if self.current_track in favorites:
                 favorites.remove(self.current_track)
@@ -342,14 +341,14 @@ class SpotifyPip(QWidget):
                 favorites.append(self.current_track)
                 self.fav_button.setText("❤️")
 
-            FAVORITES_FILE.write_text("\n".join(favorites), encoding="utf-8")
+            FAVORITES_FILE.write_text("\n".join(favorites) + "\n", encoding="utf-8")
         except Exception:
             pass
 
     def check_is_favorite(self, track_id):
         try:
             if FAVORITES_FILE.exists():
-                favorites = FAVORITES_FILE.read_text(encoding="utf-8").splitlines()
+                favorites = [line.strip() for line in FAVORITES_FILE.read_text(encoding="utf-8").splitlines() if line.strip()]
                 if track_id in favorites:
                     self.fav_button.setText("❤️")
                     return
@@ -357,13 +356,13 @@ class SpotifyPip(QWidget):
             pass
         self.fav_button.setText("🤍")
 
-    # --- CLICK-THROUGH STABILE E PRIMO PIANO FIX ---
+    # --- CLICK-THROUGH (IDENTICO AL TUO CHE FUNZIONA, PIÙ HIDE DEL CUORE) ---
     def lock_ui(self):
         self.is_locked = True
         self.last_saved_geometry = self.geometry()
         pos = self.lock_button.mapToGlobal(QPoint(0, 0))
 
-        # Nascondi solo i pulsanti e l'interfaccia accessoria
+        # Nascondi elementi accessori (incluso il cuore)
         self.fav_button.hide()
         self.lock_button.hide()
         self.close_button.hide()
@@ -371,39 +370,40 @@ class SpotifyPip(QWidget):
         self.source_badge.hide()
         self.media_widget.hide()
         self.size_grip.hide()
-        
         self.container.setStyleSheet("background-color: transparent; border: none;")
 
-        # Applica i flag di click-through SENZA chiamare self.hide() prima
+        # Stessa identica logica del tuo codice (NESSUN self.hide())
         self.setWindowFlags(self.base_flags | Qt.WindowType.WindowTransparentForInput)
-        
-        # Su X11/XWayland setWindowFlags chiude implicitamente la finestra, quindi la riapriamo subito
         self.setGeometry(self.last_saved_geometry)
+        self.setVisible(True)
         self.show()
+        self.raise_()
 
-        # Mostra il pulsante di sblocco
+        # Mostra il pulsante di sblocco nella stessa posizione
         if not self.unlock_win:
             self.unlock_win = UnlockButton(self)
         self.unlock_win.move(pos)
         self.unlock_win.show()
         self.unlock_win.raise_()
 
-        # Ritarda leggermente il repaint per assicurarsi che XWayland renderizzi i testi della canzone
-        QTimer.singleShot(50, lambda: (self.setGeometry(self.last_saved_geometry), self.show(), self.repaint()))
-
     def unlock_ui(self):
         self.is_locked = False
-
+        
+        # 1. Rimuovi il pulsante di sblocco
         if self.unlock_win:
             self.unlock_win.hide()
 
-        # Ripristina i flag base (rimuove il click-through e rimette l'AlwaysOnTop)
+        # 2. Ripristina i flag base senza trasparenza ai click
         self.setWindowFlags(self.base_flags)
+        
+        # 3. Ripristina geometria e forza visibilità esplicita
         self.setGeometry(self.last_saved_geometry)
+        self.setVisible(True)
         self.show()
+        self.raise_()
         self.activateWindow()
 
-        # Mostra di nuovo tutti i controlli
+        # 4. Mostra nuovamente i controlli (incluso il cuore)
         self.fav_button.show()
         self.lock_button.show()
         self.close_button.show()
@@ -411,7 +411,7 @@ class SpotifyPip(QWidget):
         self.source_badge.show()
         self.media_widget.show()
         self.size_grip.show()
-
+        
         self.container.setStyleSheet("""
             #container {
                 background-color: rgba(18, 18, 18, 0.45);
@@ -420,8 +420,8 @@ class SpotifyPip(QWidget):
             }
         """)
 
-        # Forza l'aggiornamento visivo finale
-        QTimer.singleShot(50, lambda: (self.setGeometry(self.last_saved_geometry), self.show(), self.repaint()))
+        # Fallback timer: ribadisce a XWayland di mantenere la finestra sopra
+        QTimer.singleShot(50, lambda: (self.setGeometry(self.last_saved_geometry), self.show(), self.raise_()))
 
     # --- TRASCINAMENTO ---
     def mousePressEvent(self, event):
@@ -439,8 +439,7 @@ class SpotifyPip(QWidget):
         try:
             res = subprocess.run(["playerctl", "-p", "spotify"] + args, capture_output=True, text=True, check=True)
             return res.stdout.strip()
-        except Exception:
-            return None
+        except Exception: return None
 
     def on_lyrics_found(self, lyrics, source):
         self.lyrics = lyrics
@@ -498,10 +497,7 @@ class SpotifyPip(QWidget):
             self.next_label.setText("")
             self.lyrics = []
             self.current_line_idx = -1
-            
-            # Controlla se il nuovo brano è tra i preferiti per aggiornare l'icona del cuore
             self.check_is_favorite(track_id)
-            
             self.start_fetch(artist, title, length_str, ignore_cache=False)
 
         if not self.lyrics: return
