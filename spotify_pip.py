@@ -13,6 +13,7 @@ from PyQt6.QtWidgets import (
 
 CACHE_DIR = Path.home() / ".cache" / "spotify-pip"
 CACHE_DIR.mkdir(parents=True, exist_ok=True)
+FAVORITES_FILE = CACHE_DIR / "favorites.txt"
 
 
 # --- PULSANTE DI SBLOCCO FLUTTUANTE SEPARATO ---
@@ -161,8 +162,6 @@ class SpotifyPip(QWidget):
     def __init__(self):
         super().__init__()
 
-        # Usiamo Window invece di Tool per permettere alla barra delle applicazioni (Dash to Panel)
-        # di intercettare e mostrare l'icona tra le applicazioni aperte
         self.base_flags = (
             Qt.WindowType.WindowStaysOnTopHint | 
             Qt.WindowType.FramelessWindowHint | 
@@ -173,7 +172,6 @@ class SpotifyPip(QWidget):
         self.setWindowFlags(self.base_flags)
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         
-        # Carica l'icona dell'app se presente nel sistema o localmente
         app_icon = QIcon.fromTheme("spotipip", QIcon("spotipip.png"))
         if not app_icon.isNull():
             self.setWindowIcon(app_icon)
@@ -220,6 +218,14 @@ class SpotifyPip(QWidget):
             QPushButton:hover { background: rgba(255, 255, 255, 0.15); color: white; }
         """
 
+        # Pulsante Preferiti
+        self.fav_button = QPushButton("🤍")
+        self.fav_button.setFixedSize(26, 26)
+        self.fav_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.fav_button.setToolTip("Aggiungi ai preferiti locali")
+        self.fav_button.clicked.connect(self.toggle_favorite)
+        self.fav_button.setStyleSheet(btn_top_style)
+
         self.lock_button = QPushButton("📌")
         self.lock_button.setFixedSize(26, 26)
         self.lock_button.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -236,6 +242,7 @@ class SpotifyPip(QWidget):
         top_bar.addWidget(self.title_label)
         top_bar.addStretch()
         top_bar.addWidget(self.source_badge)
+        top_bar.addWidget(self.fav_button)
         top_bar.addWidget(self.lock_button)
         top_bar.addWidget(self.close_button)
         container_layout.addLayout(top_bar)
@@ -318,13 +325,46 @@ class SpotifyPip(QWidget):
         self.timer.timeout.connect(self.update_state)
         self.timer.start(200)
 
-    # --- CLICK-THROUGH STABILE SENZA RESET DI FINESTRA ---
+    # --- FUNZIONE PREFERITI LOCALI ---
+    def toggle_favorite(self):
+        if not self.current_track:
+            return
+            
+        try:
+            favorites = []
+            if FAVORITES_FILE.exists():
+                favorites = FAVORITES_FILE.read_text(encoding="utf-8").splitlines()
+
+            if self.current_track in favorites:
+                favorites.remove(self.current_track)
+                self.fav_button.setText("🤍")
+            else:
+                favorites.append(self.current_track)
+                self.fav_button.setText("❤️")
+
+            FAVORITES_FILE.write_text("\n".join(favorites), encoding="utf-8")
+        except Exception:
+            pass
+
+    def check_is_favorite(self, track_id):
+        try:
+            if FAVORITES_FILE.exists():
+                favorites = FAVORITES_FILE.read_text(encoding="utf-8").splitlines()
+                if track_id in favorites:
+                    self.fav_button.setText("❤️")
+                    return
+        except Exception:
+            pass
+        self.fav_button.setText("🤍")
+
+    # --- CLICK-THROUGH STABILE E PRIMO PIANO FIX ---
     def lock_ui(self):
         self.is_locked = True
         self.last_saved_geometry = self.geometry()
         pos = self.lock_button.mapToGlobal(QPoint(0, 0))
 
-        # Nascondi elementi accessori e rendi trasparente il container
+        # Nascondi elementi accessori, compreso il pulsante cuore
+        self.fav_button.hide()
         self.lock_button.hide()
         self.close_button.hide()
         self.title_label.hide()
@@ -333,51 +373,49 @@ class SpotifyPip(QWidget):
         self.size_grip.hide()
         self.container.setStyleSheet("background-color: transparent; border: none;")
 
-        # Imposta la trasparenza ai click tramite flag di window manager mantenendo sempre on top
+        # Fix per XWayland: Nascondi la finestra per forzare l'aggiornamento pulito dei Flag
+        self.hide()
         self.setWindowFlags(self.base_flags | Qt.WindowType.WindowTransparentForInput)
         self.setGeometry(self.last_saved_geometry)
-        self.setVisible(True)
         self.show()
         self.raise_()
 
-        # Mostra il pulsante di sblocco nella stessa posizione
         if not self.unlock_win:
             self.unlock_win = UnlockButton(self)
         self.unlock_win.move(pos)
         self.unlock_win.show()
         self.unlock_win.raise_()
 
- def unlock_ui(self):
-    self.is_locked = False
-    
-    if self.unlock_win:
-        self.unlock_win.hide()
+    def unlock_ui(self):
+        self.is_locked = False
 
-    # Ripristina i flag includendo sempre esplicitamente WindowStaysOnTopHint
-    self.setWindowFlags(self.base_flags)
-    
-    self.setGeometry(self.last_saved_geometry)
-    self.show()
-    self.raise_()
-    self.activateWindow()
+        if self.unlock_win:
+            self.unlock_win.hide()
 
-    self.lock_button.show()
-    self.close_button.show()
-    self.title_label.show()
-    self.source_badge.show()
-    self.media_widget.show()
-    self.size_grip.show()
-    
-    self.container.setStyleSheet("""
-        #container {
-            background-color: rgba(18, 18, 18, 0.45);
-            border-radius: 12px;
-            border: 1px solid rgba(255, 255, 255, 0.1);
-        }
-    """)
-    
-    # Forza il gestore finestre XWayland a mantenere la proprietà Above
-    QTimer.singleShot(20, lambda: (self.setWindowFlags(self.base_flags), self.show(), self.raise_()))
+        # Rimuove il TransparentForInput e ristabilisce AlwaysOnTop rinegoziando con il Window Manager
+        self.hide()
+        self.setWindowFlags(self.base_flags)
+        self.setGeometry(self.last_saved_geometry)
+        self.show()
+        self.raise_()
+        self.activateWindow()
+
+        # Ripristina la visibilità degli elementi
+        self.fav_button.show()
+        self.lock_button.show()
+        self.close_button.show()
+        self.title_label.show()
+        self.source_badge.show()
+        self.media_widget.show()
+        self.size_grip.show()
+
+        self.container.setStyleSheet("""
+            #container {
+                background-color: rgba(18, 18, 18, 0.45);
+                border-radius: 12px;
+                border: 1px solid rgba(255, 255, 255, 0.1);
+            }
+        """)
 
     # --- TRASCINAMENTO ---
     def mousePressEvent(self, event):
@@ -395,7 +433,8 @@ class SpotifyPip(QWidget):
         try:
             res = subprocess.run(["playerctl", "-p", "spotify"] + args, capture_output=True, text=True, check=True)
             return res.stdout.strip()
-        except Exception: return None
+        except Exception:
+            return None
 
     def on_lyrics_found(self, lyrics, source):
         self.lyrics = lyrics
@@ -439,6 +478,7 @@ class SpotifyPip(QWidget):
             self.prev_label.setText("")
             self.curr_label.setText("Spotify in pausa o non attivo")
             self.next_label.setText("")
+            self.fav_button.setText("🤍")
             return
 
         track_id = f"{artist} - {title}"
@@ -452,6 +492,10 @@ class SpotifyPip(QWidget):
             self.next_label.setText("")
             self.lyrics = []
             self.current_line_idx = -1
+            
+            # Controlla se il nuovo brano è tra i preferiti per aggiornare l'icona del cuore
+            self.check_is_favorite(track_id)
+            
             self.start_fetch(artist, title, length_str, ignore_cache=False)
 
         if not self.lyrics: return
@@ -502,11 +546,9 @@ class SpotifyPip(QWidget):
 if __name__ == "__main__":
     app = QApplication(sys.argv)
     
-    # 1. Identificativi freedesktop / GNOME per associare la finestra a spotipip.desktop
     app.setApplicationName("Spotipip")
     app.setDesktopFileName("spotipip")
     
-    # 2. Imposta l'icona globale dell'applicazione
     icon = QIcon.fromTheme("spotipip", QIcon("spotipip.png"))
     if not icon.isNull():
         app.setWindowIcon(icon)
