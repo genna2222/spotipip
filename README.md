@@ -1,23 +1,27 @@
-# Spotipip
+Ecco il file `README.md` aggiornato in lingua inglese, con la ridenominazione completa in **Lyripip**, il supporto dual-player per **Spotify** e **Feishin**, l'inclusione del pulsante preferiti e tutti i comandi/percorsi allineati:
 
-Spotipip is a small Linux application written in Python/PyQt6 that displays the synchronized lyrics of the currently playing Spotify track in a **Picture-in-Picture** window.
+```markdown
+# Lyripip
 
-The window can remain **always on top** and, by pressing the `📌` button, can become **click-through**: the lyrics remain visible while mouse clicks are passed to the window underneath. A small separate `🔓` button allows you to unlock the overlay again.
+Lyripip is a lightweight Linux application written in Python/PyQt6 that displays the synchronized lyrics of the currently playing track from **Spotify** or **Feishin** in a **Picture-in-Picture** window.
 
-The project is designed for **NixOS**, with particular attention to **GNOME + Mutter + XWayland**.
+The window stays **always on top** and, by pressing the `📌` button, enters **click-through** mode: the lyrics remain visible while mouse clicks pass directly to the window underneath. A small separate `🔓` floating button lets you exit locked mode at any time.
+
+The project is tailored for **NixOS**, with explicit support for **GNOME + Mutter + XWayland**.
 
 ## Main Features
 
-- Synchronized lyrics updated according to the current track position.
-- Lyrics lookup through **LRCLIB**, with **NetEase** as a fallback.
-- Local lyrics cache in `~/.cache/spotify-pip`.
-- Spotify controls for previous track, play/pause, and next track.
-- Frameless and translucent window.
-- `📌` click-through mode: the window remains visible but does not intercept mouse clicks.
-- Floating `🔓` button for leaving locked mode.
-- Always-on-top through EWMH `_NET_WM_STATE_ABOVE`.
-- In lock mode the Qt window is not recreated: click-through uses the **X11/XWayland Input Shape**, avoiding loss of the lyrics rendering.
-- Complete Nix package with `.desktop` launcher and application icons.
+- Synchronized lyrics updated in real time based on the active player's track position.
+- **Multi-Player MPRIS support**: automatically detects playback from **Spotify** and **Feishin**.
+- Lyrics lookup through **LRCLIB**, with **NetEase Music** as a fallback.
+- Local lyrics caching in `~/.cache/lyripip`.
+- Media playback controls: previous track, play/pause, and next track.
+- **Local Favorites (`♡` / `♥`)**: toggle tracks into a local favorites list (`~/.cache/lyripip/favorites.txt`).
+- Frameless and translucent overlay.
+- `📌` click-through mode: hides controls and ignores mouse events while keeping lyrics visible.
+- Floating `🔓` button to unlock the overlay.
+- Always-on-top management via EWMH `_NET_WM_STATE_ABOVE` on XWayland.
+- Packaged natively with Nix flakes, including `.desktop` integration and scalable application icons.
 
 ## Requirements
 
@@ -25,43 +29,45 @@ The intended environment is:
 
 - Nix/NixOS with **flakes** and **nix-command** enabled.
 - A Linux graphical session with **XWayland** available.
-- Spotify running.
-- Spotify must expose its player through **MPRIS**, because the application uses `playerctl` to read the title, artist, position, and playback state and to send media commands.
-- GNOME/Mutter is the primary environment for which the Always-On-Top behavior was designed.
+- Either **Spotify** or **Feishin** running.
+- The media player must expose an **MPRIS** interface (managed via `playerctl` for metadata, position, and playback state).
+- GNOME/Mutter is the primary environment targeted for the Always-On-Top and XWayland input-shape behavior.
 
-The `flake.nix` forces `QT_QPA_PLATFORM=xcb` and includes `libX11` and `libXfixes`, which are required for native window handling under XWayland.
+The `flake.nix` sets `QT_QPA_PLATFORM=xcb` and includes `libX11` and `libXfixes` for native window handling under XWayland.
 
 ## Installing on NixOS
 
 ### 1. Clone the project
 
 ```bash
-git clone https://github.com/genna2222/spotipip.git
-cd spotipip
+git clone [https://github.com/genna2222/spotipip.git](https://github.com/genna2222/spotipip.git) lyripip
+cd lyripip
+
 ```
 
-Or simply enter the project directory if you already have a local checkout.
+### 2. Ensure flakes and nix-command are enabled
 
-### 2. Make sure flakes and nix-command are enabled
-
-Check your Nix version with:
+Verify your Nix version:
 
 ```bash
 nix --version
+
 ```
 
-If flakes and `nix-command` are not already enabled on your NixOS system, add the following to your NixOS configuration:
+If flakes and `nix-command` are not enabled yet, add the following to your NixOS configuration:
 
 ```nix
 {
   nix.settings.experimental-features = [ "nix-command" "flakes" ];
 }
+
 ```
 
 Then rebuild the system:
 
 ```bash
 sudo nixos-rebuild switch
+
 ```
 
 ### 3. Run without installing
@@ -70,41 +76,41 @@ To try the application directly from the project directory:
 
 ```bash
 nix run .
+
 ```
 
-This builds the package defined by the flake and launches `spotipip`.
+This builds the package defined by the flake and executes `lyripip`.
 
 ### 4. Install into your user profile
 
-To install it into your Nix user profile:
+To install Lyripip into your current Nix profile:
 
 ```bash
 nix profile install .
+
 ```
 
-After installation, start it with:
+After installation, launch it with:
 
 ```bash
-spotipip
+lyripip
+
 ```
 
-The package also installs the desktop entry and application icons, so GNOME can show Spotipip in the application menu.
+The package installs desktop entries and application icons, making Lyripip available in your desktop application launcher.
 
 ### 5. Install through a NixOS flake configuration
 
-If you prefer to manage Spotipip directly from your system configuration, add the repository as an input to your NixOS flake.
-
-Example:
+Add the repository input to your system `flake.nix`:
 
 ```nix
 {
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
-
-    spotipip.url = "github:genna2222/spotipip";
+    lyripip.url = "github:genna2222/spotipip"; # or github:genna2222/lyripip
   };
 
-  outputs = { self, nixpkgs, spotipip, ... }:
+  outputs = { self, nixpkgs, lyripip, ... }:
     let
       system = "x86_64-linux";
       pkgs = import nixpkgs { inherit system; };
@@ -118,260 +124,163 @@ Example:
       };
     };
 }
+
 ```
 
-Then, inside `configuration.nix` or a module imported by it:
+Then, in `configuration.nix` or an imported module (e.g., `software.nix`):
 
 ```nix
 { pkgs, inputs, ... }:
 
 {
   environment.systemPackages = [
-    inputs.spotipip.packages.${pkgs.system}.default
+    inputs.lyripip.packages.${pkgs.system}.default
   ];
 }
+
 ```
 
-Finally:
+Rebuild your system:
 
 ```bash
 sudo nixos-rebuild switch --flake .#my-pc
-```
 
-> Note: `my-pc` is only an example and must match the name used in your `nixosConfigurations`.
+```
 
 ## Local Development
 
-To enter the development environment provided by the flake:
+To enter the flake-provided development shell:
 
 ```bash
 nix develop
+
 ```
 
 The development shell provides:
 
-- Python with PyQt6 and Requests.
-- `playerctl`.
-- `xdg-utils`.
-- `libX11`.
-- `libXfixes`.
-- `QT_QPA_PLATFORM=xcb`.
-- `LD_LIBRARY_PATH` containing the required X11 libraries.
+* Python with PyQt6 and Requests.
+* `playerctl`.
+* `xdg-utils`.
+* `libX11`.
+* `libXfixes`.
+* `QT_QPA_PLATFORM=xcb`.
+* `LD_LIBRARY_PATH` configured for X11 libraries.
 
-From the development shell, you can run the application directly:
+From inside the development shell, run the script directly:
 
 ```bash
 python spotify_pip.py
+
 ```
 
 ## Usage
 
-### Normal Launch
+### Launching
 
-Start Spotipip while Spotify is running:
+Start Lyripip while Spotify or Feishin is running:
 
 ```bash
-spotipip
+lyripip
+
 ```
 
-The window displays the current track and automatically updates the synchronized lyrics.
+The overlay will automatically detect playback and fetch matching synchronized lyrics.
 
 ### `▶ / ⏸` Button
 
-The center button in the bottom bar controls Spotify playback through `playerctl`.
+Controls playback (play/pause) on the active player via `playerctl`.
 
 ### `⏮` and `⏭` Buttons
 
-Use these buttons to switch to the previous or next track.
+Skips to the previous or next track.
+
+### `♡ / ♥` Button — Local Favorites
+
+Clicking the heart icon adds or removes the current track from your local favorites list stored in `~/.cache/lyripip/favorites.txt`.
 
 ### Moving the Window
 
-When the window is unlocked, you can drag it with the mouse.
+When unlocked, drag anywhere on the window using the left mouse button.
 
 ### Resizing the Window
 
-When the window is unlocked, a resize handle is available in the lower-right corner.
+When unlocked, drag the resize grip located at the bottom-right corner.
 
 ### `📌` Button — Lock / Click-Through Mode
 
 Pressing `📌`:
 
-1. hides the controls that are not needed;
-2. makes the overlay background transparent;
-3. keeps the window above other applications;
-4. clears its X11 input shape;
-5. allows mouse clicks to pass through Spotipip to the application underneath;
-6. keeps the lyrics visible and updated.
-
-This mode is ideal for reading lyrics while using a browser, editor, or terminal underneath the overlay.
+1. Hides window controls and secondary badges.
+2. Sets a fully transparent container background.
+3. Preserves Always-On-Top elevation.
+4. Empties the X11 input shape mask.
+5. Passes all clicks directly to windows underneath while keeping lyrics visible.
 
 ### `🔓` Button — Unlock
 
-When Spotipip is locked, a small green `🔓` button appears as a separate floating window.
-
-Clicking it:
-
-- makes the overlay interactive again;
-- restores the controls;
-- allows you to move and resize the window again;
-- disables click-through mode.
+When locked, a floating green `🔓` button appears in place of the pin. Clicking it restores the full interactive window and media controls.
 
 ## Lyrics and Cache
 
-The application looks for lyrics in this order:
+Lyrics are retrieved using the following fallback sequence:
 
-1. local cache;
-2. LRCLIB using an exact lookup;
-3. LRCLIB using a general search;
-4. NetEase as a fallback.
+1. Local disk cache (`~/.cache/lyripip/`).
+2. LRCLIB exact match.
+3. LRCLIB fuzzy search query.
+4. NetEase Music search API.
 
-Cached files are stored in:
+### Context Menu Actions
 
-```text
-~/.cache/spotify-pip/
-```
+Right-click anywhere on the unlocked window to open the context menu:
 
-The cache is used automatically to avoid repeated network requests.
-
-### Reloading Lyrics
-
-With the window unlocked, the context menu provides:
-
-- `Reload (use cache)`
-- `Reload and download again (ignore cache)`
-- `Close`
-
-Open the context menu by right-clicking the window.
-
-## Starting Automatically with GNOME
-
-The package installs:
-
-```text
-share/applications/spotipip.desktop
-```
-
-with:
-
-```text
-Exec=spotipip
-```
-
-This allows Spotipip to be launched from the GNOME application menu.
-
-To start Spotipip automatically at login, you can use GNOME's startup applications settings or create a user `.desktop` file that runs the `spotipip` command.
+* **Reload (use cache)**: Re-reads lyrics from the local cache.
+* **Reload and download again (ignore cache)**: Deletes the cached file and performs a fresh query across providers.
+* **Close**: Exits the application.
 
 ## Troubleshooting
 
-### Spotipip starts but cannot see Spotify
+### Lyripip starts but does not detect playback
 
-Make sure Spotify is running and that `playerctl` can access it:
-
-```bash
-playerctl -p spotify status
-playerctl -p spotify metadata title
-playerctl -p spotify metadata artist
-playerctl -p spotify position
-```
-
-If these commands return no data, the issue is upstream of Spotipip: Spotify must be reachable through MPRIS/`playerctl`.
-
-### Lyrics are not found
-
-Not every track has synchronized lyrics available from the services queried by the application. You can force a fresh download from the context menu with:
-
-```text
-Reload and download again (ignore cache)
-```
-
-### `📌` Click-Through Mode Does Not Pass Clicks
-
-Click-through depends on the **X11/XWayland** path used by this build. The flake sets:
-
-```text
-QT_QPA_PLATFORM=xcb
-```
-
-and includes the `libX11` and `libXfixes` libraries.
-
-Make sure XWayland is available in your graphical session.
-
-### The Window Does Not Stay on Top
-
-The application asks Mutter to set the EWMH `_NET_WM_STATE_ABOVE` state and periodically reasserts it, including when the window loses focus. The intended environment is GNOME/Mutter with XWayland.
-
-### Running from Source Without Nix
-
-You can use the development environment directly:
+Ensure Spotify or Feishin is running and exporting MPRIS properties:
 
 ```bash
-nix develop
-python spotify_pip.py
+playerctl -l
+playerctl metadata title
+playerctl metadata artist
+
 ```
 
-Using `nix run .` or `nix profile install .` is recommended because the flake also provides the native X11 libraries and the wrapper configured with `QT_QPA_PLATFORM=xcb`.
+If `playerctl -l` does not list `spotify` or `feishin`, check that the player has MPRIS integration enabled.
 
-## Updating
+### Click-Through Mode does not pass clicks
 
-If the project was installed with `nix profile install`, pull the latest changes and reinstall:
+Click-through relies on X11/XWayland input shapes. Verify that your desktop session supports XWayland and that the wrapper runs with:
 
 ```bash
-git pull
-nix profile install . --refresh
+echo $QT_QPA_PLATFORM # Should output: xcb
+
 ```
 
-If you run it directly with `nix run .`, update the repository and launch it again:
+### The window does not stay on top
 
-```bash
-git pull
-nix run .
-```
-
-## Uninstalling
-
-To remove Spotipip from a Nix user profile:
-
-```bash
-nix profile list
-```
-
-Find the `spotipip` entry, then remove it with:
-
-```bash
-nix profile remove <INDEX>
-```
-
-If you added it to `environment.systemPackages` in your NixOS configuration, remove the corresponding entry from `configuration.nix` or the relevant module and rebuild:
-
-```bash
-sudo nixos-rebuild switch
-```
+Lyripip applies the `_NET_WM_STATE_ABOVE` atom directly to the native X11 window and reasserts it periodically. Ensure GNOME Mutter has not disabled custom above-state hints for frameless windows.
 
 ## Project Structure
-
-The main files are:
 
 ```text
 .
 ├── flake.nix
 ├── spotify_pip.py
-├── spotipip.desktop
-├── spotipip.svg
-└── spotipip.png
+├── lyripip.desktop
+├── lyripip.svg
+└── lyripip.png
+
 ```
-
-### `spotify_pip.py`
-
-Implements the PyQt6 GUI, lyrics retrieval and parsing, Spotify control, and X11/XWayland handling for click-through and Always-On-Top.
-
-### `flake.nix`
-
-Defines the Nix package, development shell, Python dependencies, native X11 libraries, and the `spotipip` executable wrapper.
-
-### `spotipip.desktop`
-
-Defines integration with the Linux desktop application menu.
 
 ## License
 
-The project flake declares the **MIT** license.
+Distributed under the [MIT](https://www.google.com/search?q=LICENSE&utm_source=gemini) license.
+
+```
+
+```
