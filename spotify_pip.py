@@ -13,7 +13,7 @@ from PyQt6.QtWidgets import (
     QHBoxLayout, QPushButton, QSizeGrip, QMenu
 )
 
-CACHE_DIR = Path.home() / ".cache" / "spotify-pip"
+CACHE_DIR = Path.home() / ".cache" / "lyripip"
 CACHE_DIR.mkdir(parents=True, exist_ok=True)
 
 
@@ -378,12 +378,12 @@ class SpotifyPip(QWidget):
             Qt.WindowType.Window
         )
 
-        self.setWindowTitle("Spotipip")
+        self.setWindowTitle("Lyripip")
         self.setWindowFlags(self.base_flags)
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         
         # Carica l'icona dell'app se presente nel sistema o localmente
-        app_icon = QIcon.fromTheme("spotipip", QIcon("spotipip.png"))
+        app_icon = QIcon.fromTheme("lyripip", QIcon("lyripip.png"))
         if not app_icon.isNull():
             self.setWindowIcon(app_icon)
 
@@ -411,7 +411,7 @@ class SpotifyPip(QWidget):
         top_bar = QHBoxLayout()
         top_bar.setContentsMargins(0, 0, 0, 0)
 
-        self.title_label = QLabel("Spotipip")
+        self.title_label = QLabel("Lyripip")
         self.title_label.setStyleSheet("color: #cccccc; font-size: 11px; font-weight: bold;")
         
         self.source_badge = QLabel("")
@@ -460,7 +460,7 @@ class SpotifyPip(QWidget):
         self.prev_label.setStyleSheet("color: rgba(255, 255, 255, 0.5); font-size: 13px; font-weight: 500;")
         lyrics_layout.addWidget(self.prev_label)
 
-        self.curr_label = QLabel("In attesa di Spotify...")
+        self.curr_label = QLabel("In attesa di riproduzione...")
         self.curr_label.setWordWrap(True)
         self.curr_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.curr_label.setStyleSheet("color: #1DB954; font-size: 17px; font-weight: bold;")
@@ -522,6 +522,7 @@ class SpotifyPip(QWidget):
         self.drag_position = QPoint()
         self.unlock_win = None
         self.last_saved_geometry = self.geometry()
+        self.active_player = None
 
         # Manteniamo la stessa finestra nativa per tutta la vita dell'app.
         # Il passaggio lock/unlock usa X11/XWayland invece di setWindowFlags().
@@ -591,8 +592,6 @@ class SpotifyPip(QWidget):
 
     def focusOutEvent(self, event):
         super().focusOutEvent(event)
-        # Non usa raise_()/activateWindow(): non dobbiamo rubare il focus,
-        # ma solo ribadire ad XWayland/Mutter che questa finestra resta sopra.
         QTimer.singleShot(0, self.ensure_always_on_top)
 
     def lock_ui(self):
@@ -600,8 +599,6 @@ class SpotifyPip(QWidget):
         self.last_saved_geometry = self.geometry()
         pos = self.lock_button.mapToGlobal(QPoint(0, 0))
 
-        # Nascondi elementi accessori ma NON toccare la struttura/widget tree
-        # che renderizza i testi.
         self.lock_button.hide()
         self.close_button.hide()
         self.title_label.hide()
@@ -610,15 +607,12 @@ class SpotifyPip(QWidget):
         self.size_grip.hide()
         self.container.setStyleSheet("background-color: transparent; border: none;")
 
-        # XWayland: click-through senza setWindowFlags(), quindi nessuna
-        # ricreazione del native window e nessuna perdita del rendering Qt.
         self._apply_input_mode(True)
         self.show()
         self.update()
         self.container.update()
         self.ensure_always_on_top()
 
-        # Mostra il pulsante di sblocco nella stessa posizione.
         if not self.unlock_win:
             self.unlock_win = UnlockButton(self)
         self.unlock_win.move(pos)
@@ -629,21 +623,17 @@ class SpotifyPip(QWidget):
     def unlock_ui(self):
         self.is_locked = False
 
-        # 1. Rimuovi il pulsante di sblocco.
         if self.unlock_win:
             self.unlock_win.hide()
 
-        # 2. Ripristina la Input Shape senza modificare i Window Flags.
         self._apply_input_mode(False)
 
-        # 3. Ripristina geometria/visibilità e ribadisci l'Always-On-Top.
         self.setGeometry(self.last_saved_geometry)
         self.show()
         self.raise_()
         self.activateWindow()
         self.ensure_always_on_top()
 
-        # 4. Mostra nuovamente i controlli.
         self.lock_button.show()
         self.close_button.show()
         self.title_label.show()
@@ -661,7 +651,6 @@ class SpotifyPip(QWidget):
         self.update()
         self.container.update()
 
-        # Fallback leggero per Mutter/XWayland dopo la transizione.
         QTimer.singleShot(50, self.ensure_always_on_top)
         QTimer.singleShot(100, self.ensure_always_on_top)
 
@@ -682,11 +671,40 @@ class SpotifyPip(QWidget):
             self.last_saved_geometry = self.geometry()
             event.accept()
 
-    def run_cmd(self, args):
+    def _detect_active_player(self):
+        """Trova il player MPRIS attivo dando precedenza allo stato Playing."""
         try:
-            res = subprocess.run(["playerctl", "-p", "spotify"] + args, capture_output=True, text=True, check=True)
+            res = subprocess.run(["playerctl", "-l"], capture_output=True, text=True, check=True)
+            available = res.stdout.strip().splitlines()
+        except Exception:
+            return None
+
+        # Filtra i player supportati (feishin e spotify)
+        supported = [p for p in available if any(name in p.lower() for name in ("feishin", "spotify"))]
+        if not supported:
+            return None
+
+        # Priorità a chi sta effettivamente riproducendo musica
+        for p in supported:
+            try:
+                st = subprocess.run(["playerctl", "-p", p, "status"], capture_output=True, text=True)
+                if st.stdout.strip() == "Playing":
+                    return p
+            except Exception:
+                pass
+
+        # Altrimenti restituisce il primo trovato
+        return supported[0]
+
+    def run_cmd(self, args):
+        target = self.active_player or self._detect_active_player()
+        if not target:
+            return None
+        try:
+            res = subprocess.run(["playerctl", "-p", target] + args, capture_output=True, text=True, check=True)
             return res.stdout.strip()
-        except Exception: return None
+        except Exception:
+            return None
 
     def on_lyrics_found(self, lyrics, source):
         self.lyrics = lyrics
@@ -715,6 +733,8 @@ class SpotifyPip(QWidget):
         self.worker.start()
 
     def update_state(self):
+        self.active_player = self._detect_active_player()
+
         title = self.run_cmd(["metadata", "title"])
         artist = self.run_cmd(["metadata", "artist"])
         position_str = self.run_cmd(["position"])
@@ -725,10 +745,10 @@ class SpotifyPip(QWidget):
         else: self.btn_play.setText("▶")
 
         if not title or not artist or position_str is None:
-            if not self.is_locked: self.title_label.setText("Spotify disconnesso")
+            if not self.is_locked: self.title_label.setText("Nessun player attivo")
             self.source_badge.setText("")
             self.prev_label.setText("")
-            self.curr_label.setText("Spotify in pausa o non attivo")
+            self.curr_label.setText("In attesa di riproduzione...")
             self.next_label.setText("")
             return
 
@@ -794,11 +814,11 @@ if __name__ == "__main__":
     app = QApplication(sys.argv)
     
     # 1. Identificativi freedesktop / GNOME per associare la finestra a spotipip.desktop
-    app.setApplicationName("Spotipip")
-    app.setDesktopFileName("spotipip")
+    app.setApplicationName("Lyripip")
+    app.setDesktopFileName("lyripip")
     
     # 2. Imposta l'icona globale dell'applicazione
-    icon = QIcon.fromTheme("spotipip", QIcon("spotipip.png"))
+    icon = QIcon.fromTheme("lyripip", QIcon("lyripip.png"))
     if not icon.isNull():
         app.setWindowIcon(icon)
         

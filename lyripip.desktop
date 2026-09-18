@@ -1,0 +1,10 @@
+[Desktop Entry]
+Name=Lyripip
+GenericName=Music PiP Lyrics
+Comment=Testi sincronizzati per Spotify e Feishin in overlay Picture-in-Picture
+Exec=lyripip
+Icon=lyripip
+Terminal=false
+Type=Application
+Categories=AudioVideo;Audio;Player;
+StartupWMClass=Lyripip

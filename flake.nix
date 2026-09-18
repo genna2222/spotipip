@@ -1,5 +1,5 @@
 {
-  description = "Spotify PiP Lyrics overlay per NixOS (GNOME Always-On-Top fix)";
+  description = "Lyripip - Music PiP Lyrics overlay per NixOS (Spotify & Feishin)";
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
@@ -24,8 +24,8 @@
           ]
         );
 
-        spotifyPipPkg = pkgs.stdenv.mkDerivation {
-          pname = "spotipip";
+        lyripipPkg = pkgs.stdenv.mkDerivation {
+          pname = "lyripip";
           version = "1.0.4";
 
           src = ./.;
@@ -34,16 +34,15 @@
 
           installPhase = ''
             runHook preInstall
-            mkdir -p $out/lib/spotipip
-            cp spotify_pip.py $out/lib/spotipip/
-            cp spotipip.png $out/lib/spotipip/
-            cp spotipip.svg $out/lib/spotipip/
+            mkdir -p $out/lib/lyripip
+            cp spotify_pip.py $out/lib/lyripip/
+            cp lyripip.png $out/lib/lyripip/
+            cp lyripip.svg $out/lib/lyripip/
 
             mkdir -p $out/bin
-            makeWrapper ${pythonEnv}/bin/python $out/bin/spotipip \
-              --add-flags "$out/lib/spotipip/spotify_pip.py" \
+            makeWrapper ${pythonEnv}/bin/python $out/bin/lyripip \
+              --add-flags "$out/lib/lyripip/spotify_pip.py" \
               --set QT_QPA_PLATFORM xcb \
-              --prefix LD_LIBRARY_PATH : "${pkgs.lib.makeLibraryPath [ pkgs.xorg.libX11 pkgs.xorg.libXfixes ]}" \
               --prefix XDG_DATA_DIRS : "$out/share" \
               --prefix PATH : ${
                 pkgs.lib.makeBinPath [
@@ -53,30 +52,30 @@
               }
 
             mkdir -p $out/share/applications
-            cp spotipip.desktop $out/share/applications/
+            cp lyripip.desktop $out/share/applications/
 
             mkdir -p $out/share/icons/hicolor/scalable/apps
-            cp spotipip.svg $out/share/icons/hicolor/scalable/apps/spotipip.svg
+            cp lyripip.svg $out/share/icons/hicolor/scalable/apps/lyripip.svg
 
             mkdir -p $out/share/icons/hicolor/256x256/apps
-            cp spotipip.png $out/share/icons/hicolor/256x256/apps/spotipip.png
+            cp lyripip.png $out/share/icons/hicolor/256x256/apps/lyripip.png
             runHook postInstall
           '';
 
           meta = with pkgs.lib; {
-            description = "Finestra flottante Picture-in-Picture con testi sincronizzati per Spotify";
+            description = "Finestra flottante Picture-in-Picture con testi sincronizzati per Spotify e Feishin";
             homepage = "https://github.com/genna2222/spotipip";
             license = licenses.mit;
             platforms = platforms.linux;
-            mainProgram = "spotipip";
+            mainProgram = "lyripip";
           };
         };
       in
       {
-        packages.default = spotifyPipPkg;
+        packages.default = lyripipPkg;
 
         apps.default = flake-utils.lib.mkApp {
-          drv = spotifyPipPkg;
+          drv = lyripipPkg;
         };
 
         devShells.default = pkgs.mkShell {
@@ -84,12 +83,9 @@
             pythonEnv
             pkgs.playerctl
             pkgs.xdg-utils
-            pkgs.xorg.libX11
-            pkgs.xorg.libXfixes
           ];
           shellHook = ''
             export QT_QPA_PLATFORM=xcb
-            export LD_LIBRARY_PATH="${pkgs.lib.makeLibraryPath [ pkgs.xorg.libX11 pkgs.xorg.libXfixes ]}:$LD_LIBRARY_PATH"
           '';
         };
       }
