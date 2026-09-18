@@ -1,6 +1,3 @@
-Ecco il file `README.md` aggiornato in lingua inglese, con la ridenominazione completa in **Lyripip**, il supporto dual-player per **Spotify** e **Feishin**, l'inclusione del pulsante preferiti e tutti i comandi/percorsi allineati:
-
-```markdown
 # Lyripip
 
 Lyripip is a lightweight Linux application written in Python/PyQt6 that displays the synchronized lyrics of the currently playing track from **Spotify** or **Feishin** in a **Picture-in-Picture** window.
@@ -280,7 +277,5 @@ Lyripip applies the `_NET_WM_STATE_ABOVE` atom directly to the native X11 window
 ## License
 
 Distributed under the [MIT](https://www.google.com/search?q=LICENSE&utm_source=gemini) license.
-
-```
 
 ```
